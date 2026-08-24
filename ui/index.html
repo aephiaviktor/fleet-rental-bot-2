@@ -63,6 +63,22 @@
         <div class="dialog-actions"><span></span><button id="settings-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
       </form>
     </dialog>
+    <dialog id="review-dialog" class="review-dialog">
+      <div class="section-head"><div><p class="eyebrow">UNSIGNED RESERVATION</p><h2 id="review-title">Review</h2></div><button id="review-close" type="button" class="icon">×</button></div>
+      <div id="review-loading" class="review-message">Refetching contract and assembling instructions…</div>
+      <div id="review-content" hidden>
+        <div class="review-grid">
+          <div><span>ACTION</span><strong id="review-action"></strong></div>
+          <div><span>EXACT BID</span><strong id="review-bid"></strong></div>
+          <div><span>DURATION</span><strong id="review-duration"></strong></div>
+          <div><span>INSTRUCTIONS</span><strong id="review-count"></strong></div>
+        </div>
+        <p id="review-warning" class="review-warning"></p>
+        <div id="review-instructions" class="instruction-list"></div>
+      </div>
+      <div id="review-blocked" class="review-message error" hidden></div>
+      <div class="dialog-actions"><span></span><button id="review-done" type="button" class="secondary">Close</button><button type="button" disabled>Signing disabled</button></div>
+    </dialog>
     <script src="app.js"></script>
   </body>
 </html>

@@ -68,10 +68,14 @@ export function deriveWalletPosition(snapshot: FleetContractSnapshot, walletAddr
 }
 
 export async function loadContractSnapshot(contractAddress: string, rpcUrl: string): Promise<FleetContractSnapshot> {
+  return mapContractSnapshot(await loadRawContractSnapshot(contractAddress, rpcUrl));
+}
+
+export async function loadRawContractSnapshot(contractAddress: string, rpcUrl: string): Promise<ContractSnapshot> {
   if (!contractAddress.trim()) throw new Error('Contract address is required');
   if (!rpcUrl.trim()) throw new Error('RPC URL is required');
   // @sly-rentals/core 5.4.0 publishes a working CommonJS build, while its ESM
   // root contains extensionless directory imports that Node 24 rejects.
   const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
-  return mapContractSnapshot(await core.getContractSnapshot({ contractAddress, rpcUrl }));
+  return core.getContractSnapshot({ contractAddress, rpcUrl });
 }

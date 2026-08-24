@@ -76,6 +76,19 @@ ipcMain.handle('watchlist:refresh', async () => {
   return refreshWatchlist(watchlist.entries, settings);
 });
 
+ipcMain.handle('reservation:review', async (_event, entryId) => {
+  if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');
+  const [{ loadWatchlist }, { loadSettings }, { prepareReservationReview }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('settings-store'), domainModule('reservation-review'),
+  ]);
+  const [watchlist, settings] = await Promise.all([
+    loadWatchlist(watchlistPath()), loadSettings(settingsPath()),
+  ]);
+  const entry = watchlist.entries.find((candidate) => candidate.id === entryId);
+  if (!entry) throw new Error('Watchlist entry not found');
+  return prepareReservationReview(entry, settings);
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {

@@ -67,13 +67,56 @@ function renderTable() {
     const edit = make('button', 'Edit', 'table-action');
     edit.type = 'button';
     edit.addEventListener('click', () => openDialog(entry));
-    actions.append(edit);
+    const review = make('button', 'Review', 'table-action');
+    review.type = 'button';
+    review.disabled = !entry.enabled;
+    review.addEventListener('click', () => openReview(entry));
+    actions.append(review, edit);
     row.append(actions);
     const result = state.live.get(entry.id);
     if (result && !result.ok) { row.classList.add('error-row'); row.title = result.error; }
     body.append(row);
   }
   byId('empty-state').hidden = state.document.entries.length !== 0;
+}
+
+async function openReview(entry) {
+  byId('review-title').textContent = entry.label;
+  byId('review-loading').hidden = false;
+  byId('review-content').hidden = true;
+  byId('review-blocked').hidden = true;
+  byId('review-dialog').showModal();
+  try {
+    const review = await window.fleetRentalBot.prepareReservationReview(entry.id);
+    byId('review-loading').hidden = true;
+    if (review.kind === 'blocked') {
+      byId('review-blocked').textContent = `${review.plan.reason}: ${review.plan.detail}`;
+      byId('review-blocked').hidden = false;
+      return;
+    }
+    byId('review-action').textContent = review.plan.action.toUpperCase();
+    byId('review-bid').textContent = `${number(review.plan.bidAtlas)} ATLAS`;
+    byId('review-duration').textContent = `${number(review.plan.requestedDurationSeconds / 86400, 2)} days`;
+    byId('review-count').textContent = String(review.instructionCount);
+    byId('review-warning').textContent = `Maximum bid remains ${number(review.plan.maximumBidAtlas)} ATLAS. This payload cannot sign or submit.`;
+    const list = byId('review-instructions');
+    list.replaceChildren();
+    for (const instruction of review.instructions) {
+      const card = make('div', null, 'instruction');
+      card.append(make('strong', `#${instruction.index + 1} · ${instruction.programAddress}`));
+      card.append(make('span', `${instruction.dataBytes} data bytes · ${instruction.accounts.length} accounts`));
+      const accounts = make('details');
+      accounts.append(make('summary', 'Derived accounts'));
+      for (const account of instruction.accounts) accounts.append(make('code', `${account.address} · role ${account.role}`));
+      card.append(accounts);
+      list.append(card);
+    }
+    byId('review-content').hidden = false;
+  } catch (error) {
+    byId('review-loading').hidden = true;
+    byId('review-blocked').textContent = error instanceof Error ? error.message : String(error);
+    byId('review-blocked').hidden = false;
+  }
 }
 
 function renderSummary() {
@@ -199,6 +242,7 @@ byId('settings-button').addEventListener('click', () => {
   byId('settings-dialog').showModal();
 });
 for (const id of ['settings-close', 'settings-cancel']) byId(id).addEventListener('click', () => byId('settings-dialog').close());
+for (const id of ['review-close', 'review-done']) byId(id).addEventListener('click', () => byId('review-dialog').close());
 byId('settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   state.settings = { version: 1, rpcUrl: byId('settings-rpc').value.trim(), walletAddress: byId('settings-wallet').value.trim(), challengerProfileAddress: byId('settings-profile').value.trim(), refreshIntervalSeconds: Number(byId('settings-interval').value) };

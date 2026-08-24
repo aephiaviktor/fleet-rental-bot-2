@@ -16,3 +16,11 @@ test('renderer uses a restrictive content security policy', async () => {
   assert.match(html, /connect-src 'none'/);
   assert.doesNotMatch(html, /https?:\/\//);
 });
+
+test('watchlist writes are exposed only through the validated IPC boundary', async () => {
+  const preload = await readFile('electron/preload.cjs', 'utf8');
+  const main = await readFile('electron/main.cjs', 'utf8');
+  assert.match(preload, /saveWatchlist/);
+  assert.doesNotMatch(preload, /require\(['"]node:fs/);
+  assert.match(main, /saveWatchlist\(watchlistPath\(\), document\)/);
+});

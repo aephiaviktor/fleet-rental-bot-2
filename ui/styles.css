@@ -12,9 +12,34 @@ p { color:var(--muted); line-height:1.55; }
 .badge.safe { color:var(--mint); border-color:rgba(110,231,183,.5); }
 main { padding:28px 32px; }
 .panel { border:1px solid var(--line); background:var(--panel); padding:24px; }
-.hero { display:flex; justify-content:space-between; gap:24px; align-items:center; }
-.hero p { max-width:760px; }
+.toolbar,.section-head,.header-actions,.toolbar-actions,.dialog-actions,.checks { display:flex; justify-content:space-between; gap:16px; align-items:center; }
+.toolbar p { max-width:760px; }
 button { border:1px solid var(--cyan); background:transparent; color:var(--cyan); padding:10px 15px; font:12px ui-monospace,monospace; }
-button:disabled { opacity:.35; }
-.empty { margin-top:18px; min-height:350px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.secondary,.table-action,.icon { color:var(--muted); border-color:var(--line); }
+.danger { color:#fb7185; border-color:#fb7185; }
+.columns-panel { margin-top:12px; }
+.column-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-top:18px; }
+.column-options label,.checks label { color:var(--muted); font-size:12px; }
+.table-panel { border:1px solid var(--line); background:var(--panel); margin-top:18px; min-height:350px; }
+.table-scroll { overflow:auto; }
+table { width:100%; border-collapse:collapse; white-space:nowrap; }
+th,td { padding:12px 14px; border-bottom:1px solid var(--line); text-align:left; font-size:12px; }
+th { color:var(--muted); font:10px ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase; }
+.disabled-row { opacity:.45; }
+.table-action { padding:5px 9px; }
+.empty { min-height:350px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
 .empty p:last-child { margin-top:8px; }
+#save-state { color:var(--muted); font:10px ui-monospace,monospace; }
+dialog { width:min(720px,calc(100vw - 40px)); border:1px solid var(--line); background:var(--panel); color:var(--ink); padding:24px; }
+dialog::backdrop { background:rgba(0,0,0,.7); }
+form { display:grid; gap:16px; }
+label { display:grid; gap:7px; color:var(--muted); font-size:12px; }
+input,textarea { width:100%; border:1px solid var(--line); background:#07111a; color:var(--ink); padding:10px; font:13px inherit; }
+input:focus,textarea:focus { outline:1px solid var(--cyan); }
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.checks label { display:flex; align-items:center; }
+.checks input { width:auto; }
+.dialog-actions span { flex:1; }
+.icon { font-size:20px; padding:2px 9px; }
+.error { color:#fb7185; }
+[hidden] { display:none !important; }

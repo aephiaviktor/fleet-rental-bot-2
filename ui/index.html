@@ -9,27 +9,43 @@
   </head>
   <body>
     <header>
-      <div>
-        <p class="eyebrow">NEXT-GEN SRSLY</p>
-        <h1>Fleet Rental Bot 2</h1>
-      </div>
-      <span id="mode" class="badge">Starting…</span>
+      <div><p class="eyebrow">NEXT-GEN SRSLY</p><h1>Fleet Rental Bot 2</h1></div>
+      <div class="header-actions"><span id="save-state">Saved</span><span id="mode" class="badge">Starting…</span></div>
     </header>
     <main>
-      <section class="panel hero">
-        <div>
-          <h2>Curated fleet reservations</h2>
-          <p>Add only fleets you already consider attractive. The app will monitor their live contract economics, defender bonus, and Loyalty Points potential.</p>
-        </div>
-        <button type="button" disabled>Add fleet</button>
+      <section class="panel toolbar">
+        <div><h2>Curated fleet watchlist</h2><p>Add only fleets you would be happy to rent if the reservation activates.</p></div>
+        <div class="toolbar-actions"><button id="columns-button" type="button" class="secondary">Columns</button><button id="add-button" type="button">Add fleet</button></div>
       </section>
-      <section class="panel empty">
-        <p class="eyebrow">WATCHLIST</p>
-        <h2>Editable fleet table coming in the next slice</h2>
-        <p>The transaction layer remains disabled while the read-only UI is being assembled.</p>
+      <section id="columns-panel" class="panel columns-panel" hidden>
+        <div class="section-head"><div><p class="eyebrow">VISIBLE COLUMNS</p><h2>Choose table metrics</h2></div><button id="columns-done" type="button" class="secondary">Done</button></div>
+        <div id="column-options" class="column-options"></div>
+      </section>
+      <section class="table-panel">
+        <div class="table-scroll"><table><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table></div>
+        <div id="empty-state" class="empty" hidden><p class="eyebrow">WATCHLIST EMPTY</p><h2>Add the first attractive fleet</h2><p>The bot monitors only contracts you explicitly add.</p></div>
       </section>
     </main>
     <footer><span id="version">v—</span><span id="data-directory"></span></footer>
+
+    <dialog id="fleet-dialog">
+      <form id="fleet-form">
+        <div class="section-head"><div><p class="eyebrow">WATCHLIST ENTRY</p><h2 id="dialog-title">Add fleet</h2></div><button id="dialog-close" type="button" class="icon">×</button></div>
+        <input id="entry-id" type="hidden">
+        <label>Fleet label<input id="entry-label" required maxlength="80" autocomplete="off"></label>
+        <label>Next-gen rental contract<input id="entry-contract" required maxlength="44" autocomplete="off" spellcheck="false"></label>
+        <div class="form-grid">
+          <label>Requested duration (days)<input id="entry-duration" required type="number" min="0.0416667" max="93" step="0.0416667" value="7"></label>
+          <label>Operating value (ATLAS)<input id="entry-value" type="number" min="0" step="0.00000001" placeholder="Optional"></label>
+          <label>Maximum rental rate (ATLAS/day)<input id="entry-max-rate" required type="number" min="1" step="0.00000001"></label>
+          <label>Maximum reservation bid (ATLAS)<input id="entry-max-bid" required type="number" min="0" step="0.00000001"></label>
+        </div>
+        <label>Comment<textarea id="entry-comment" rows="3" maxlength="500"></textarea></label>
+        <div class="checks"><label><input id="entry-enabled" type="checkbox" checked> Enabled</label><label><input id="entry-operable" type="checkbox" checked> Safe to operate if activated</label></div>
+        <p id="form-error" class="error" hidden></p>
+        <div class="dialog-actions"><button id="entry-delete" type="button" class="danger" hidden>Remove</button><span></span><button id="dialog-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save fleet</button></div>
+      </form>
+    </dialog>
     <script src="app.js"></script>
   </body>
 </html>

@@ -3,6 +3,14 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 
 let mainWindow = null;
 
+async function domainModule(name) {
+  return import(`../dist/src/${name}.js`);
+}
+
+function watchlistPath() {
+  return path.join(app.getPath('userData'), 'watchlist.json');
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -28,6 +36,20 @@ ipcMain.handle('app:get-bootstrap', async () => ({
   dataDirectory: app.getPath('userData'),
   readOnly: true,
 }));
+
+ipcMain.handle('watchlist:load', async () => {
+  const [{ loadWatchlist }, { COLUMN_DEFINITIONS }] = await Promise.all([
+    domainModule('watchlist-store'),
+    domainModule('columns'),
+  ]);
+  return { document: await loadWatchlist(watchlistPath()), columns: COLUMN_DEFINITIONS };
+});
+
+ipcMain.handle('watchlist:save', async (_event, document) => {
+  const { saveWatchlist } = await domainModule('watchlist-store');
+  await saveWatchlist(watchlistPath(), document);
+  return { ok: true };
+});
 
 app.whenReady().then(() => {
   createWindow();

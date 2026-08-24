@@ -29,9 +29,15 @@ export interface FleetContractSnapshot {
   rentalRateAtlasPerDay: number;
   activeRentalEndsAtMs: number | null;
   reservationCurrency: ReservationCurrency | null;
+  reservationDefender: string | null;
   reservationBidAtlas: number | null;
+  reservationBidPoints: number | null;
   minimumTakeoverBidAtlas: number | null;
+  minimumTakeoverBidPoints: number | null;
+  reservationCreatedAtMs: number | null;
   fleetWeight: number;
+  basePointsPerDay: number;
+  effectivePointsPerDay: number;
 }
 
 export interface WalletPosition {

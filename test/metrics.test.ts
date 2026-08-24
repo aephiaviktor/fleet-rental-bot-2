@@ -27,7 +27,9 @@ const entry: FleetWatchEntry = {
 };
 const snapshot: FleetContractSnapshot = {
   rentalRateAtlasPerDay: 90, activeRentalEndsAtMs: null, reservationCurrency: 'ATLAS',
-  reservationBidAtlas: 100, minimumTakeoverBidAtlas: 110, fleetWeight: 2,
+  reservationDefender: 'wallet', reservationBidAtlas: 100, reservationBidPoints: 0,
+  minimumTakeoverBidAtlas: 110, minimumTakeoverBidPoints: 1.1, reservationCreatedAtMs: null,
+  fleetWeight: 2, basePointsPerDay: 10, effectivePointsPerDay: 20,
 };
 
 test('recommends reserve, hold, rebid, and stop from the same curated entry', () => {

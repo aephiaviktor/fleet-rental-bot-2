@@ -15,10 +15,16 @@ test('settings require HTTP RPC and bounded refresh interval', () => {
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, refreshIntervalSeconds: 5 }), /between 15 and 3600/);
 });
 
+test('wallet identification must be empty or a valid Solana address', () => {
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, walletAddress: 'wallet' }), /valid Solana address/);
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, walletAddress: '' }).walletAddress, '');
+});
+
 test('settings persist atomically without exposing the RPC URL permissions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   const file = join(root, 'settings.json');
-  await saveSettings(file, { ...DEFAULT_SETTINGS, walletAddress: 'wallet' });
-  assert.equal((await loadSettings(file)).walletAddress, 'wallet');
+  const wallet = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
+  await saveSettings(file, { ...DEFAULT_SETTINGS, walletAddress: wallet });
+  assert.equal((await loadSettings(file)).walletAddress, wallet);
   assert.match(await readFile(file, 'utf8'), /"version": 1/);
 });

@@ -7,7 +7,7 @@ import { DEFAULT_VISIBLE_COLUMNS } from '../src/columns.js';
 import { loadWatchlist, parseWatchlist, saveWatchlist, type WatchlistDocument } from '../src/watchlist-store.js';
 
 const entry = {
-  id: 'fleet-1', label: 'Fleet One', contractAddress: 'contract-1', requestedDurationSeconds: 3600,
+  id: 'fleet-1', label: 'Fleet One', contractAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7', requestedDurationSeconds: 3600,
   estimatedOperatingValueAtlas: 50, maximumRentalRateAtlasPerDay: 100,
   maximumReservationBidAtlas: 20, canSafelyOperate: true, enabled: true, comment: 'Attractive',
 };
@@ -21,6 +21,13 @@ test('missing watchlist loads as an empty safe document', async () => {
 
 test('rejects duplicate contracts', () => {
   assert.throws(() => parseWatchlist(JSON.stringify({ version: 1, entries: [entry, { ...entry, id: 'fleet-2' }] })), /unique/);
+});
+
+test('rejects malformed Solana contract addresses before persistence', () => {
+  assert.throws(
+    () => parseWatchlist(JSON.stringify({ version: 1, entries: [{ ...entry, contractAddress: 'not-a-solana-address' }] })),
+    /valid Solana address/,
+  );
 });
 
 test('normalizes selectable columns and ignores unknown values', () => {

@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeVisibleColumns, type ColumnId } from './columns.js';
 import type { FleetWatchEntry } from './model.js';
+import { requireSolanaAddress } from './solana-address.js';
 
 export interface WatchlistDocument {
   version: 1;
@@ -23,7 +24,7 @@ export function validateWatchEntry(value: unknown): FleetWatchEntry {
   return {
     id: entry.id!.trim(),
     label: entry.label!.trim(),
-    contractAddress: entry.contractAddress!.trim(),
+    contractAddress: requireSolanaAddress(entry.contractAddress!, 'contractAddress'),
     requestedDurationSeconds: finiteNonNegative(entry.requestedDurationSeconds, 'requestedDurationSeconds'),
     estimatedOperatingValueAtlas: entry.estimatedOperatingValueAtlas == null
       ? null

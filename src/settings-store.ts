@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { requireSolanaAddress } from './solana-address.js';
 
 export interface AppSettings {
   version: 1;
@@ -33,7 +34,9 @@ export function validateSettings(value: unknown): AppSettings {
   return {
     version: 1,
     rpcUrl: candidate.rpcUrl,
-    walletAddress: candidate.walletAddress.trim(),
+    walletAddress: candidate.walletAddress.trim() === ''
+      ? ''
+      : requireSolanaAddress(candidate.walletAddress, 'walletAddress'),
     refreshIntervalSeconds: refreshIntervalSeconds!,
   };
 }

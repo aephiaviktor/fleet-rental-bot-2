@@ -59,4 +59,7 @@ input:focus,textarea:focus { outline:1px solid var(--cyan); }
 .instruction { border:1px solid var(--line); padding:11px; display:grid; gap:7px; }
 .instruction > span,.instruction summary { color:var(--muted); font-size:11px; }
 .instruction code { display:block; color:var(--muted); padding:4px 0; overflow-wrap:anywhere; }
+.simulation-result { border-top:1px solid var(--line); margin-top:16px; padding-top:16px; }
+.simulation-result pre { max-height:220px; overflow:auto; background:#050b10; border:1px solid var(--line); padding:12px; color:var(--muted); font:11px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
+.simulation-pass { color:var(--mint); }
 [hidden] { display:none !important; }

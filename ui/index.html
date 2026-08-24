@@ -75,9 +75,13 @@
         </div>
         <p id="review-warning" class="review-warning"></p>
         <div id="review-instructions" class="instruction-list"></div>
+        <div id="simulation-result" class="simulation-result" hidden>
+          <div class="section-head"><h2 id="simulation-status"></h2><span id="simulation-units"></span></div>
+          <pre id="simulation-logs"></pre>
+        </div>
       </div>
       <div id="review-blocked" class="review-message error" hidden></div>
-      <div class="dialog-actions"><span></span><button id="review-done" type="button" class="secondary">Close</button><button type="button" disabled>Signing disabled</button></div>
+      <div class="dialog-actions"><span></span><button id="review-done" type="button" class="secondary">Close</button><button id="simulate-button" type="button">Simulate</button><button type="button" disabled>Signing disabled</button></div>
     </dialog>
     <script src="app.js"></script>
   </body>

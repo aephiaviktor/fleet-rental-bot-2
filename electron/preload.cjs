@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   refreshWatchlist: () => ipcRenderer.invoke('watchlist:refresh'),
   prepareReservationReview: (entryId) => ipcRenderer.invoke('reservation:review', entryId),
+  simulateReservation: (entryId) => ipcRenderer.invoke('reservation:simulate', entryId),
 });

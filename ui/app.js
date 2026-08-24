@@ -81,10 +81,13 @@ function renderTable() {
 }
 
 async function openReview(entry) {
+  byId('review-dialog').dataset.entryId = entry.id;
   byId('review-title').textContent = entry.label;
   byId('review-loading').hidden = false;
   byId('review-content').hidden = true;
   byId('review-blocked').hidden = true;
+  byId('simulation-result').hidden = true;
+  byId('simulate-button').disabled = true;
   byId('review-dialog').showModal();
   try {
     const review = await window.fleetRentalBot.prepareReservationReview(entry.id);
@@ -112,10 +115,44 @@ async function openReview(entry) {
       list.append(card);
     }
     byId('review-content').hidden = false;
+    byId('simulate-button').disabled = false;
   } catch (error) {
     byId('review-loading').hidden = true;
     byId('review-blocked').textContent = error instanceof Error ? error.message : String(error);
     byId('review-blocked').hidden = false;
+  }
+}
+
+async function simulateReviewedReservation() {
+  const entryId = byId('review-dialog').dataset.entryId;
+  const button = byId('simulate-button');
+  button.disabled = true;
+  button.textContent = 'Simulating…';
+  byId('simulation-result').hidden = true;
+  try {
+    const result = await window.fleetRentalBot.simulateReservation(entryId);
+    if (result.kind === 'blocked') {
+      byId('simulation-status').textContent = 'SIMULATION BLOCKED';
+      byId('simulation-units').textContent = result.plan.reason;
+      byId('simulation-logs').textContent = result.plan.detail;
+    } else {
+      byId('simulation-status').textContent = result.simulation.ok ? 'SIMULATION PASSED' : 'SIMULATION FAILED';
+      byId('simulation-status').className = result.simulation.ok ? 'simulation-pass' : 'error';
+      byId('simulation-units').textContent = `${number(result.simulation.unitsConsumed, 0)} compute units · valid through block ${result.simulation.lastValidBlockHeight}`;
+      const lines = result.simulation.logs.length ? result.simulation.logs : ['No program logs returned'];
+      if (result.simulation.error) lines.unshift(`ERROR: ${result.simulation.error}`);
+      byId('simulation-logs').textContent = lines.join('\n');
+    }
+    byId('simulation-result').hidden = false;
+  } catch (error) {
+    byId('simulation-status').textContent = 'SIMULATION ERROR';
+    byId('simulation-status').className = 'error';
+    byId('simulation-units').textContent = '';
+    byId('simulation-logs').textContent = error instanceof Error ? error.message : String(error);
+    byId('simulation-result').hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Simulate';
   }
 }
 
@@ -243,6 +280,7 @@ byId('settings-button').addEventListener('click', () => {
 });
 for (const id of ['settings-close', 'settings-cancel']) byId(id).addEventListener('click', () => byId('settings-dialog').close());
 for (const id of ['review-close', 'review-done']) byId(id).addEventListener('click', () => byId('review-dialog').close());
+byId('simulate-button').addEventListener('click', simulateReviewedReservation);
 byId('settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   state.settings = { version: 1, rpcUrl: byId('settings-rpc').value.trim(), walletAddress: byId('settings-wallet').value.trim(), challengerProfileAddress: byId('settings-profile').value.trim(), refreshIntervalSeconds: Number(byId('settings-interval').value) };

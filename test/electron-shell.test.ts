@@ -26,4 +26,6 @@ test('watchlist writes are exposed only through the validated IPC boundary', asy
   assert.match(main, /refreshWatchlist\(watchlist.entries, settings\)/);
   assert.match(main, /prepareReservationReview\(entry, settings\)/);
   assert.match(preload, /reservation:review/);
+  assert.match(main, /simulateReservation\(entry, settings\)/);
+  assert.match(preload, /reservation:simulate/);
 });

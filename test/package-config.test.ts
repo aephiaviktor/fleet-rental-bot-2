@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+test('packaging includes runtime files and excludes source and tests', async () => {
+  const pkg = JSON.parse(await readFile('package.json', 'utf8')) as {
+    build: { asar: boolean; files: string[] };
+  };
+  assert.equal(pkg.build.asar, true);
+  assert.deepEqual(pkg.build.files, ['electron/**/*', 'ui/**/*', 'dist/src/**/*', 'package.json']);
+  assert.equal(pkg.build.files.some((path) => path.startsWith('test/')), false);
+  assert.equal(pkg.build.files.some((path) => path.startsWith('src/')), false);
+});

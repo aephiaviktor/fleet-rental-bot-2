@@ -57,8 +57,9 @@
         <div class="section-head"><div><p class="eyebrow">CONNECTION</p><h2>Read-only settings</h2></div><button id="settings-close" type="button" class="icon">×</button></div>
         <label>Solana RPC URL<input id="settings-rpc" required type="url" autocomplete="off" spellcheck="false"></label>
         <label>Wallet address<input id="settings-wallet" maxlength="44" autocomplete="off" spellcheck="false" placeholder="Used only to identify your reservations"></label>
+        <label>SAGE profile address<input id="settings-profile" maxlength="44" autocomplete="off" spellcheck="false" placeholder="Required only to prepare a reservation"></label>
         <label>Refresh interval (seconds)<input id="settings-interval" required type="number" min="15" max="3600" step="1"></label>
-        <p>Wallet address is read-only identification. No secret key is requested or stored.</p>
+        <p>Wallet and profile are public addresses. No secret key is requested or stored.</p>
         <div class="dialog-actions"><span></span><button id="settings-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
       </form>
     </dialog>

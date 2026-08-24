@@ -20,6 +20,17 @@ test('wallet identification must be empty or a valid Solana address', () => {
   assert.equal(validateSettings({ ...DEFAULT_SETTINGS, walletAddress: '' }).walletAddress, '');
 });
 
+test('SAGE profile must be empty or a valid Solana address', () => {
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, challengerProfileAddress: 'profile' }), /valid Solana address/);
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, challengerProfileAddress: '' }).challengerProfileAddress, '');
+});
+
+test('older version-one settings without a SAGE profile migrate safely', () => {
+  const legacy = { ...DEFAULT_SETTINGS } as Partial<typeof DEFAULT_SETTINGS>;
+  delete legacy.challengerProfileAddress;
+  assert.equal(validateSettings(legacy).challengerProfileAddress, '');
+});
+
 test('settings persist atomically without exposing the RPC URL permissions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   const file = join(root, 'settings.json');

@@ -6,6 +6,7 @@ export interface AppSettings {
   version: 1;
   rpcUrl: string;
   walletAddress: string;
+  challengerProfileAddress: string;
   refreshIntervalSeconds: number;
 }
 
@@ -13,6 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
   walletAddress: '',
+  challengerProfileAddress: '',
   refreshIntervalSeconds: 60,
 };
 
@@ -25,6 +27,8 @@ export function validateSettings(value: unknown): AppSettings {
   try { url = new URL(candidate.rpcUrl); } catch { throw new Error('RPC URL must be a valid URL'); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('RPC URL must use HTTP or HTTPS');
   if (typeof candidate.walletAddress !== 'string') throw new Error('Wallet address must be a string');
+  const challengerProfileAddress = candidate.challengerProfileAddress ?? '';
+  if (typeof challengerProfileAddress !== 'string') throw new Error('SAGE profile address must be a string');
   const refreshIntervalSeconds = candidate.refreshIntervalSeconds;
   if (!Number.isInteger(refreshIntervalSeconds)
     || refreshIntervalSeconds! < 15
@@ -37,6 +41,9 @@ export function validateSettings(value: unknown): AppSettings {
     walletAddress: candidate.walletAddress.trim() === ''
       ? ''
       : requireSolanaAddress(candidate.walletAddress, 'walletAddress'),
+    challengerProfileAddress: challengerProfileAddress.trim() === ''
+      ? ''
+      : requireSolanaAddress(challengerProfileAddress, 'challengerProfileAddress'),
     refreshIntervalSeconds: refreshIntervalSeconds!,
   };
 }

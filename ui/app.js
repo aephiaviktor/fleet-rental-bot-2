@@ -194,13 +194,14 @@ byId('refresh-button').addEventListener('click', refresh);
 byId('settings-button').addEventListener('click', () => {
   byId('settings-rpc').value = state.settings.rpcUrl;
   byId('settings-wallet').value = state.settings.walletAddress;
+  byId('settings-profile').value = state.settings.challengerProfileAddress;
   byId('settings-interval').value = state.settings.refreshIntervalSeconds;
   byId('settings-dialog').showModal();
 });
 for (const id of ['settings-close', 'settings-cancel']) byId(id).addEventListener('click', () => byId('settings-dialog').close());
 byId('settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  state.settings = { version: 1, rpcUrl: byId('settings-rpc').value.trim(), walletAddress: byId('settings-wallet').value.trim(), refreshIntervalSeconds: Number(byId('settings-interval').value) };
+  state.settings = { version: 1, rpcUrl: byId('settings-rpc').value.trim(), walletAddress: byId('settings-wallet').value.trim(), challengerProfileAddress: byId('settings-profile').value.trim(), refreshIntervalSeconds: Number(byId('settings-interval').value) };
   await window.fleetRentalBot.saveSettings(state.settings);
   byId('settings-dialog').close();
   scheduleRefresh();

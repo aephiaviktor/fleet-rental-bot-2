@@ -1,5 +1,8 @@
+import { createRequire } from 'node:module';
 import type { ContractSnapshot } from '@sly-rentals/core';
 import type { FleetContractSnapshot, WalletPosition } from './model.js';
+
+const require = createRequire(import.meta.url);
 
 const DEFAULT_DECIMAL_FACTOR = 100_000_000;
 
@@ -58,9 +61,8 @@ export function deriveWalletPosition(snapshot: FleetContractSnapshot, walletAddr
 export async function loadContractSnapshot(contractAddress: string, rpcUrl: string): Promise<FleetContractSnapshot> {
   if (!contractAddress.trim()) throw new Error('Contract address is required');
   if (!rpcUrl.trim()) throw new Error('RPC URL is required');
-  // Keep the SDK import out of the pure mapping path. @sly-rentals/core 5.4.0's
-  // ESM root currently contains extensionless directory imports that Node rejects;
-  // Electron's bundler can resolve them, while unit tests remain independent.
-  const { getContractSnapshot } = await import('@sly-rentals/core');
-  return mapContractSnapshot(await getContractSnapshot({ contractAddress, rpcUrl }));
+  // @sly-rentals/core 5.4.0 publishes a working CommonJS build, while its ESM
+  // root contains extensionless directory imports that Node 24 rejects.
+  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  return mapContractSnapshot(await core.getContractSnapshot({ contractAddress, rpcUrl }));
 }

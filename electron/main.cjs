@@ -11,6 +11,10 @@ function watchlistPath() {
   return path.join(app.getPath('userData'), 'watchlist.json');
 }
 
+function settingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -49,6 +53,27 @@ ipcMain.handle('watchlist:save', async (_event, document) => {
   const { saveWatchlist } = await domainModule('watchlist-store');
   await saveWatchlist(watchlistPath(), document);
   return { ok: true };
+});
+
+ipcMain.handle('settings:load', async () => {
+  const { loadSettings } = await domainModule('settings-store');
+  return loadSettings(settingsPath());
+});
+
+ipcMain.handle('settings:save', async (_event, settings) => {
+  const { saveSettings } = await domainModule('settings-store');
+  await saveSettings(settingsPath(), settings);
+  return { ok: true };
+});
+
+ipcMain.handle('watchlist:refresh', async () => {
+  const [{ loadWatchlist }, { loadSettings }, { refreshWatchlist }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('settings-store'), domainModule('live-refresh'),
+  ]);
+  const [watchlist, settings] = await Promise.all([
+    loadWatchlist(watchlistPath()), loadSettings(settingsPath()),
+  ]);
+  return refreshWatchlist(watchlist.entries, settings);
 });
 
 app.whenReady().then(() => {

@@ -4,4 +4,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   getBootstrap: () => ipcRenderer.invoke('app:get-bootstrap'),
   loadWatchlist: () => ipcRenderer.invoke('watchlist:load'),
   saveWatchlist: (document) => ipcRenderer.invoke('watchlist:save', document),
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  refreshWatchlist: () => ipcRenderer.invoke('watchlist:refresh'),
 });

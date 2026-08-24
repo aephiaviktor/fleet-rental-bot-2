@@ -13,7 +13,8 @@
     "start": "npm run build && electron .",
     "start:electron": "npm run start",
     "package:dir": "npm run build && electron-builder --dir",
-    "package:linux": "npm run build && electron-builder --linux AppImage"
+    "package:linux": "npm run build && electron-builder --linux AppImage",
+    "package:windows": "npm run build && electron-builder --win portable --x64"
   },
   "dependencies": {
     "@sly-rentals/core": "5.4.0"
@@ -28,6 +29,7 @@
     "appId": "com.aephia.fleet-rental-bot-2",
     "productName": "Fleet Rental Bot 2",
     "asar": true,
+    "compression": "normal",
     "directories": { "output": "release" },
     "files": [
       "electron/**/*",
@@ -35,9 +37,15 @@
       "dist/src/**/*",
       "package.json"
     ],
+    "win": {
+      "target": ["portable"],
+      "icon": "assets/fleet-rental-bot-2.ico",
+      "artifactName": "Fleet-Rental-Bot-2-${version}-portable.${ext}"
+    },
     "linux": {
       "target": ["AppImage"],
-      "category": "Utility"
+      "category": "Utility",
+      "icon": "assets/fleet-rental-bot-2.png"
     }
   }
 }

@@ -11,3 +11,12 @@ test('packaging includes runtime files and excludes source and tests', async () 
   assert.equal(pkg.build.files.some((path) => path.startsWith('test/')), false);
   assert.equal(pkg.build.files.some((path) => path.startsWith('src/')), false);
 });
+
+test('Windows packaging produces a branded versioned portable artifact', async () => {
+  const pkg = JSON.parse(await readFile('package.json', 'utf8')) as {
+    build: { win: { target: string[]; icon: string; artifactName: string } };
+  };
+  assert.deepEqual(pkg.build.win.target, ['portable']);
+  assert.equal(pkg.build.win.icon, 'assets/fleet-rental-bot-2.ico');
+  assert.match(pkg.build.win.artifactName, /\$\{version\}/);
+});

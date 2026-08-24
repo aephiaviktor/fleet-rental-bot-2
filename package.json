@@ -3,17 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "description": "Next-generation SRSLY fleet reservation watchlist and manager",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/test/*.test.js"
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "start": "npm run build && electron .",
+    "start:electron": "npm run start"
   },
   "dependencies": {
     "@sly-rentals/core": "5.4.0"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "electron": "^42.1.0",
     "typescript": "^5.9.2"
   }
 }

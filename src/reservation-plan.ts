@@ -7,13 +7,12 @@ export type ReservationBlockReason =
   | 'bid-limit'
   | 'no-active-rental'
   | 'stale-snapshot'
-  | 'minimum-bid-unavailable'
-  | 'self-rebid-unverified';
+  | 'minimum-bid-unavailable';
 
 export type AtlasReservationPlan =
   | {
       kind: 'ready';
-      action: 'reserve';
+      action: 'reserve' | 'rebid';
       contractAddress: string;
       bidAtlas: number;
       requestedDurationSeconds: number;
@@ -34,9 +33,6 @@ export function planAtlasReservation(
 ): AtlasReservationPlan {
   if (!entry.enabled) return blocked('disabled', 'Fleet is disabled');
   if (!entry.canSafelyOperate) return blocked('unsafe-operation', 'Fleet is not marked safe to operate');
-  if (position.status === 'defending') {
-    return blocked('self-rebid-unverified', 'Current-defender rebidding is not enabled until the protocol path is verified');
-  }
   if (snapshot.rentalRateAtlasPerDay > entry.maximumRentalRateAtlasPerDay) {
     return blocked(
       'rental-rate-limit',
@@ -55,7 +51,7 @@ export function planAtlasReservation(
 
   return {
     kind: 'ready',
-    action: 'reserve',
+    action: position.status === 'defending' ? 'rebid' : 'reserve',
     contractAddress: entry.contractAddress,
     bidAtlas,
     requestedDurationSeconds: entry.requestedDurationSeconds,

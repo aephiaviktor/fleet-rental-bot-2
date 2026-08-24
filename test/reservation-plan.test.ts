@@ -51,9 +51,12 @@ test('can challenge a Points defender using the protocol ATLAS minimum', () => {
   if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 95);
 });
 
-test('does not prepare unresolved self-rebids for the current defender', () => {
+test('plans a minimum-bid self-rebid after the official SDK path was verified', () => {
   const defending: WalletPosition = { status: 'defending', atlasLocked: 90, reservedAtMs: 1_000 };
-  assert.deepEqual(planAtlasReservation(entry, { ...snapshot, reservationCurrency: 'ATLAS', reservationDefender: 'wallet' }, defending, 10_000), {
-    kind: 'blocked', reason: 'self-rebid-unverified', detail: 'Current-defender rebidding is not enabled until the protocol path is verified',
-  });
+  const plan = planAtlasReservation(entry, { ...snapshot, reservationCurrency: 'ATLAS', reservationDefender: 'wallet' }, defending, 10_000);
+  assert.equal(plan.kind, 'ready');
+  if (plan.kind === 'ready') {
+    assert.equal(plan.action, 'rebid');
+    assert.equal(plan.bidAtlas, 95);
+  }
 });

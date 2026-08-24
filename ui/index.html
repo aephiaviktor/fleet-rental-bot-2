@@ -1,88 +1,9 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
-    <title>Fleet Rental Bot 2</title>
-    <link rel="stylesheet" href="styles.css">
-  </head>
-  <body>
-    <header>
-      <div><p class="eyebrow">NEXT-GEN SRSLY</p><h1>Fleet Rental Bot 2</h1></div>
-      <div class="header-actions"><span id="save-state">Saved</span><span id="mode" class="badge">Starting…</span></div>
-    </header>
-    <main>
-      <section class="panel toolbar">
-        <div><h2>Curated fleet watchlist</h2><p>Add only fleets you would be happy to rent if the reservation activates.</p></div>
-        <div class="toolbar-actions"><button id="settings-button" type="button" class="secondary">Settings</button><button id="columns-button" type="button" class="secondary">Columns</button><button id="refresh-button" type="button" class="secondary">Refresh</button><button id="add-button" type="button">Add fleet</button></div>
-      </section>
-      <section class="summary-grid">
-        <div class="summary"><span>ATLAS LOCKED</span><strong id="summary-locked">—</strong></div>
-        <div class="summary"><span>ACTIVE DEFENSES</span><strong id="summary-defenses">—</strong></div>
-        <div class="summary"><span>ENABLED FLEETS</span><strong id="summary-enabled">—</strong></div>
-        <div class="summary"><span>LAST REFRESH</span><strong id="summary-refreshed">Never</strong></div>
-      </section>
-      <section id="columns-panel" class="panel columns-panel" hidden>
-        <div class="section-head"><div><p class="eyebrow">VISIBLE COLUMNS</p><h2>Choose table metrics</h2></div><button id="columns-done" type="button" class="secondary">Done</button></div>
-        <div id="column-options" class="column-options"></div>
-      </section>
-      <section class="table-panel">
-        <div class="table-scroll"><table><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table></div>
-        <div id="empty-state" class="empty" hidden><p class="eyebrow">WATCHLIST EMPTY</p><h2>Add the first attractive fleet</h2><p>The bot monitors only contracts you explicitly add.</p></div>
-      </section>
-    </main>
-    <footer><span id="version">v—</span><span id="data-directory"></span></footer>
-
-    <dialog id="fleet-dialog">
-      <form id="fleet-form">
-        <div class="section-head"><div><p class="eyebrow">WATCHLIST ENTRY</p><h2 id="dialog-title">Add fleet</h2></div><button id="dialog-close" type="button" class="icon">×</button></div>
-        <input id="entry-id" type="hidden">
-        <label>Fleet label<input id="entry-label" required maxlength="80" autocomplete="off"></label>
-        <label>Next-gen rental contract<input id="entry-contract" required maxlength="44" autocomplete="off" spellcheck="false"></label>
-        <div class="form-grid">
-          <label>Requested duration (days)<input id="entry-duration" required type="number" min="0.0416667" max="93" step="0.0416667" value="7"></label>
-          <label>Operating value (ATLAS)<input id="entry-value" type="number" min="0" step="0.00000001" placeholder="Optional"></label>
-          <label>Maximum rental rate (ATLAS/day)<input id="entry-max-rate" required type="number" min="1" step="0.00000001"></label>
-          <label>Maximum reservation bid (ATLAS)<input id="entry-max-bid" required type="number" min="0" step="0.00000001"></label>
-        </div>
-        <label>Comment<textarea id="entry-comment" rows="3" maxlength="500"></textarea></label>
-        <div class="checks"><label><input id="entry-enabled" type="checkbox" checked> Enabled</label><label><input id="entry-operable" type="checkbox" checked> Safe to operate if activated</label></div>
-        <p id="form-error" class="error" hidden></p>
-        <div class="dialog-actions"><button id="entry-delete" type="button" class="danger" hidden>Remove</button><span></span><button id="dialog-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save fleet</button></div>
-      </form>
-    </dialog>
-    <dialog id="settings-dialog">
-      <form id="settings-form">
-        <div class="section-head"><div><p class="eyebrow">CONNECTION</p><h2>Read-only settings</h2></div><button id="settings-close" type="button" class="icon">×</button></div>
-        <label>Solana RPC URL<input id="settings-rpc" required type="url" autocomplete="off" spellcheck="false"></label>
-        <label>Wallet address<input id="settings-wallet" maxlength="44" autocomplete="off" spellcheck="false" placeholder="Used only to identify your reservations"></label>
-        <label>SAGE profile address<input id="settings-profile" maxlength="44" autocomplete="off" spellcheck="false" placeholder="Required only to prepare a reservation"></label>
-        <label>Refresh interval (seconds)<input id="settings-interval" required type="number" min="15" max="3600" step="1"></label>
-        <p>Wallet and profile are public addresses. No secret key is requested or stored.</p>
-        <div class="dialog-actions"><span></span><button id="settings-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
-      </form>
-    </dialog>
-    <dialog id="review-dialog" class="review-dialog">
-      <div class="section-head"><div><p class="eyebrow">UNSIGNED RESERVATION</p><h2 id="review-title">Review</h2></div><button id="review-close" type="button" class="icon">×</button></div>
-      <div id="review-loading" class="review-message">Refetching contract and assembling instructions…</div>
-      <div id="review-content" hidden>
-        <div class="review-grid">
-          <div><span>ACTION</span><strong id="review-action"></strong></div>
-          <div><span>EXACT BID</span><strong id="review-bid"></strong></div>
-          <div><span>DURATION</span><strong id="review-duration"></strong></div>
-          <div><span>INSTRUCTIONS</span><strong id="review-count"></strong></div>
-        </div>
-        <p id="review-warning" class="review-warning"></p>
-        <div id="review-instructions" class="instruction-list"></div>
-        <div id="simulation-result" class="simulation-result" hidden>
-          <div class="section-head"><h2 id="simulation-status"></h2><span id="simulation-units"></span></div>
-          <pre id="simulation-logs"></pre>
-        </div>
-      </div>
-      <div id="review-blocked" class="review-message error" hidden></div>
-      <div class="dialog-actions"><span></span><button id="review-done" type="button" class="secondary">Close</button><button id="simulate-button" type="button">Simulate</button><button type="button" disabled>Signing disabled</button></div>
-    </dialog>
-    <script src="app.js"></script>
-  </body>
-</html>
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'"><title>Fleet Rental Bot 2</title><link rel="stylesheet" href="styles.css"></head><body>
+<div class="app-shell"><main class="app-main"><div class="app"><header class="app-header"><div class="app-header-title"><img src="aephia-logo.png" class="app-header-logo" alt=""><h1>Fleet Rental Bot 2</h1></div><span id="mode" class="running-pill">Starting…</span></header>
+<section class="panel app-panel"><div class="panel-toolbar"><div><h2>Fleet Reservation Rules</h2><p>Enter a next-gen rental contract directly in the table. Live fleet and reservation data is resolved automatically.</p></div><div class="toolbar-actions"><button id="columns-button" type="button">Columns</button><button id="refresh-button" type="button">Refresh</button></div></div>
+<div id="columns-panel" class="columns-panel" hidden><div id="column-options" class="column-options"></div></div>
+<div class="rules-table-scroll"><table class="rules-table"><thead><tr id="table-head"></tr></thead><tbody id="rental-rules-body"></tbody><tfoot><tr><td id="table-footer" class="add-row-cell"><button id="add-rule-row-btn" type="button">+ Add Row</button></td></tr></tfoot></table></div>
+<div class="actions"><span id="save-state">Saved</span><span id="version">v—</span></div></section></div></main>
+<aside class="settings-rail"><div class="rail-inner"><section class="status-panel"><h2>Settings</h2><form id="settings-form" class="settings-form"><label>Solana RPC URL<input id="settings-rpc" required type="url" autocomplete="off"></label><label>Wallet Address<input id="settings-wallet" maxlength="44" autocomplete="off"></label><label>SAGE Profile Address<input id="settings-profile" maxlength="44" autocomplete="off"></label><label>Refresh Interval Seconds<input id="settings-interval" required type="number" min="15" max="3600"></label><button type="submit">Save Settings</button><small>Public addresses only. No secret key is stored.</small></form></section>
+<section class="status-panel"><h2>Status</h2><div class="metric"><span>ATLAS locked</span><strong id="summary-locked">—</strong></div><div class="metric"><span>Active defenses</span><strong id="summary-defenses">—</strong></div><div class="metric"><span>Enabled fleets</span><strong id="summary-enabled">—</strong></div><div class="metric"><span>Last refresh</span><strong id="summary-refreshed">Never</strong></div></section><section class="status-panel"><h2>Mode</h2><p>Read-only monitoring, unsigned review and simulation. Signing is disabled.</p></section></div></aside></div>
+<dialog id="review-dialog"><div class="review-head"><h2 id="review-title">Reservation Review</h2><button id="review-close" type="button">×</button></div><div id="review-loading">Preparing…</div><div id="review-content" hidden><div id="review-summary"></div><div id="review-instructions"></div><div id="simulation-result" hidden><h3 id="simulation-status"></h3><span id="simulation-units"></span><pre id="simulation-logs"></pre></div></div><div id="review-blocked" class="error" hidden></div><div class="dialog-actions"><button id="review-done" type="button">Close</button><button id="simulate-button" type="button">Simulate</button><button disabled>Signing disabled</button></div></dialog><script src="app.js"></script></body></html>

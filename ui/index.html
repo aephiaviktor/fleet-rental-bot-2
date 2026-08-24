@@ -15,7 +15,13 @@
     <main>
       <section class="panel toolbar">
         <div><h2>Curated fleet watchlist</h2><p>Add only fleets you would be happy to rent if the reservation activates.</p></div>
-        <div class="toolbar-actions"><button id="columns-button" type="button" class="secondary">Columns</button><button id="add-button" type="button">Add fleet</button></div>
+        <div class="toolbar-actions"><button id="settings-button" type="button" class="secondary">Settings</button><button id="columns-button" type="button" class="secondary">Columns</button><button id="refresh-button" type="button" class="secondary">Refresh</button><button id="add-button" type="button">Add fleet</button></div>
+      </section>
+      <section class="summary-grid">
+        <div class="summary"><span>ATLAS LOCKED</span><strong id="summary-locked">—</strong></div>
+        <div class="summary"><span>ACTIVE DEFENSES</span><strong id="summary-defenses">—</strong></div>
+        <div class="summary"><span>ENABLED FLEETS</span><strong id="summary-enabled">—</strong></div>
+        <div class="summary"><span>LAST REFRESH</span><strong id="summary-refreshed">Never</strong></div>
       </section>
       <section id="columns-panel" class="panel columns-panel" hidden>
         <div class="section-head"><div><p class="eyebrow">VISIBLE COLUMNS</p><h2>Choose table metrics</h2></div><button id="columns-done" type="button" class="secondary">Done</button></div>
@@ -44,6 +50,16 @@
         <div class="checks"><label><input id="entry-enabled" type="checkbox" checked> Enabled</label><label><input id="entry-operable" type="checkbox" checked> Safe to operate if activated</label></div>
         <p id="form-error" class="error" hidden></p>
         <div class="dialog-actions"><button id="entry-delete" type="button" class="danger" hidden>Remove</button><span></span><button id="dialog-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save fleet</button></div>
+      </form>
+    </dialog>
+    <dialog id="settings-dialog">
+      <form id="settings-form">
+        <div class="section-head"><div><p class="eyebrow">CONNECTION</p><h2>Read-only settings</h2></div><button id="settings-close" type="button" class="icon">×</button></div>
+        <label>Solana RPC URL<input id="settings-rpc" required type="url" autocomplete="off" spellcheck="false"></label>
+        <label>Wallet address<input id="settings-wallet" maxlength="44" autocomplete="off" spellcheck="false" placeholder="Used only to identify your reservations"></label>
+        <label>Refresh interval (seconds)<input id="settings-interval" required type="number" min="15" max="3600" step="1"></label>
+        <p>Wallet address is read-only identification. No secret key is requested or stored.</p>
+        <div class="dialog-actions"><span></span><button id="settings-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save settings</button></div>
       </form>
     </dialog>
     <script src="app.js"></script>

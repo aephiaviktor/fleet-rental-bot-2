@@ -23,4 +23,5 @@ test('watchlist writes are exposed only through the validated IPC boundary', asy
   assert.match(preload, /saveWatchlist/);
   assert.doesNotMatch(preload, /require\(['"]node:fs/);
   assert.match(main, /saveWatchlist\(watchlistPath\(\), document\)/);
+  assert.match(main, /refreshWatchlist\(watchlist.entries, settings\)/);
 });

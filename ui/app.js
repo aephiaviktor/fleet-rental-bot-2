@@ -1,4 +1,4 @@
-const state = { document: null, columns: [] };
+const state = { document: null, columns: [], settings: null, live: new Map(), refreshTimer: null };
 const byId = (id) => document.getElementById(id);
 
 function make(tag, text, className) {
@@ -8,16 +8,45 @@ function make(tag, text, className) {
   return element;
 }
 
+const number = (value, digits = 2) => value == null ? '—' : Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
+const duration = (milliseconds) => {
+  if (milliseconds == null) return '—';
+  const hours = milliseconds / 3_600_000;
+  return hours >= 48 ? `${number(hours / 24, 1)} d` : `${number(hours, 1)} h`;
+};
+
 function displayValue(entry, columnId) {
+  const result = state.live.get(entry.id);
+  if (result && !result.ok) return columnId === 'recommendation' ? 'Refresh error' : '—';
+  const row = result?.row;
+  const snapshot = row?.snapshot;
+  const position = row?.position;
   const days = entry.requestedDurationSeconds / 86400;
   const values = {
     label: entry.label,
     requestedDuration: `${days.toLocaleString(undefined, { maximumFractionDigits: 2 })} d`,
-    operatingValue: entry.estimatedOperatingValueAtlas == null ? '—' : `${entry.estimatedOperatingValueAtlas} ATLAS`,
-    maximumRentalRate: `${entry.maximumRentalRateAtlasPerDay} ATLAS/day`,
-    maximumReservationBid: `${entry.maximumReservationBidAtlas} ATLAS`,
-    recommendation: entry.enabled ? 'Waiting for live data' : 'Disabled',
-    positionStatus: '—',
+    rentalRate: snapshot ? `${number(snapshot.rentalRateAtlasPerDay)} ATLAS/d` : '—',
+    rentalCost: row ? `${number(row.rentalCostAtlas)} ATLAS` : '—',
+    operatingValue: entry.estimatedOperatingValueAtlas == null ? '—' : `${number(entry.estimatedOperatingValueAtlas)} ATLAS`,
+    netValue: row?.netOperatingValueAtlas == null ? '—' : `${number(row.netOperatingValueAtlas)} ATLAS`,
+    maximumRentalRate: `${number(entry.maximumRentalRateAtlasPerDay)} ATLAS/d`,
+    maximumReservationBid: `${number(entry.maximumReservationBidAtlas)} ATLAS`,
+    reservationCurrency: snapshot?.reservationCurrency ?? '—',
+    reservationBid: snapshot?.reservationCurrency === 'POINTS' ? `${number(snapshot.reservationBidPoints)} Points` : snapshot?.reservationBidAtlas == null ? '—' : `${number(snapshot.reservationBidAtlas)} ATLAS`,
+    minimumTakeoverBid: snapshot?.reservationCurrency === 'POINTS' ? `${number(snapshot.minimumTakeoverBidPoints)} Points` : snapshot ? `${number(snapshot.minimumTakeoverBidAtlas)} ATLAS` : '—',
+    atlasLocked: position ? `${number(position.atlasLocked)} ATLAS` : '—',
+    reservationAge: row ? duration(row.reservationAgeMs) : '—',
+    holdingFraction: row?.holdingFraction == null ? '—' : `${number(row.holdingFraction * 100, 1)}%`,
+    bonusIfOutbidNow: row?.bonusIfOutbidNowAtlas == null ? '—' : `${number(row.bonusIfOutbidNowAtlas)} ATLAS`,
+    projectedExpiryFloorBonus: row?.projectedExpiryFloorBonusAtlas == null ? '—' : `${number(row.projectedExpiryFloorBonusAtlas)} ATLAS`,
+    maximumRemainingLock: row ? duration(row.maximumRemainingLockMs) : '—',
+    fleetWeight: snapshot ? number(snapshot.fleetWeight, 0) : '—',
+    estimatedPointsPerDay: snapshot ? number(snapshot.effectivePointsPerDay) : '—',
+    estimatedPoints: row ? number(row.estimatedPoints) : '—',
+    pointsPerThousandAtlas: row ? number(row.pointsPerThousandAtlas) : '—',
+    existingPointsBalance: '—',
+    recommendation: !entry.enabled ? 'Disabled' : row ? row.recommendation : 'Waiting for live data',
+    positionStatus: !entry.enabled ? 'Disabled' : position?.status ?? '—',
   };
   return values[columnId] ?? '—';
 }
@@ -40,9 +69,39 @@ function renderTable() {
     edit.addEventListener('click', () => openDialog(entry));
     actions.append(edit);
     row.append(actions);
+    const result = state.live.get(entry.id);
+    if (result && !result.ok) { row.classList.add('error-row'); row.title = result.error; }
     body.append(row);
   }
   byId('empty-state').hidden = state.document.entries.length !== 0;
+}
+
+function renderSummary() {
+  const successful = [...state.live.values()].filter((result) => result.ok).map((result) => result.row);
+  byId('summary-locked').textContent = `${number(successful.reduce((sum, row) => sum + row.position.atlasLocked, 0))} ATLAS`;
+  byId('summary-defenses').textContent = String(successful.filter((row) => row.position.status === 'defending').length);
+  byId('summary-enabled').textContent = String(state.document.entries.filter((entry) => entry.enabled).length);
+}
+
+function scheduleRefresh() {
+  clearInterval(state.refreshTimer);
+  state.refreshTimer = setInterval(refresh, state.settings.refreshIntervalSeconds * 1000);
+}
+
+async function refresh() {
+  const button = byId('refresh-button');
+  button.disabled = true;
+  button.textContent = 'Refreshing…';
+  try {
+    const results = await window.fleetRentalBot.refreshWatchlist();
+    state.live = new Map(results.map((result) => [result.id, result]));
+    byId('summary-refreshed').textContent = new Date().toLocaleTimeString();
+    renderTable();
+    renderSummary();
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Refresh';
+  }
 }
 
 function renderColumnOptions() {
@@ -111,22 +170,42 @@ function formEntry() {
 }
 
 async function bootstrap() {
-  const [details, watchlist] = await Promise.all([
-    window.fleetRentalBot.getBootstrap(), window.fleetRentalBot.loadWatchlist(),
+  const [details, watchlist, settings] = await Promise.all([
+    window.fleetRentalBot.getBootstrap(), window.fleetRentalBot.loadWatchlist(), window.fleetRentalBot.loadSettings(),
   ]);
   state.document = watchlist.document;
   state.columns = watchlist.columns;
+  state.settings = settings;
   byId('version').textContent = `v${details.version}`;
   byId('data-directory').textContent = details.dataDirectory;
   byId('mode').textContent = details.readOnly ? 'READ-ONLY' : 'LIVE';
   byId('mode').classList.add(details.readOnly ? 'safe' : 'live');
   renderColumnOptions();
   renderTable();
+  renderSummary();
+  scheduleRefresh();
+  if (state.document.entries.some((entry) => entry.enabled)) await refresh();
 }
 
 byId('add-button').addEventListener('click', () => openDialog());
 byId('columns-button').addEventListener('click', () => { byId('columns-panel').hidden = !byId('columns-panel').hidden; });
 byId('columns-done').addEventListener('click', () => { byId('columns-panel').hidden = true; });
+byId('refresh-button').addEventListener('click', refresh);
+byId('settings-button').addEventListener('click', () => {
+  byId('settings-rpc').value = state.settings.rpcUrl;
+  byId('settings-wallet').value = state.settings.walletAddress;
+  byId('settings-interval').value = state.settings.refreshIntervalSeconds;
+  byId('settings-dialog').showModal();
+});
+for (const id of ['settings-close', 'settings-cancel']) byId(id).addEventListener('click', () => byId('settings-dialog').close());
+byId('settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  state.settings = { version: 1, rpcUrl: byId('settings-rpc').value.trim(), walletAddress: byId('settings-wallet').value.trim(), refreshIntervalSeconds: Number(byId('settings-interval').value) };
+  await window.fleetRentalBot.saveSettings(state.settings);
+  byId('settings-dialog').close();
+  scheduleRefresh();
+  await refresh();
+});
 for (const id of ['dialog-close', 'dialog-cancel']) byId(id).addEventListener('click', () => byId('fleet-dialog').close());
 byId('fleet-form').addEventListener('submit', async (event) => {
   event.preventDefault();

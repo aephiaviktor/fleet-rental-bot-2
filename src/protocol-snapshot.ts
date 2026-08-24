@@ -38,14 +38,21 @@ export function mapContractSnapshot(snapshot: ContractSnapshot): FleetContractSn
   ));
 
   return {
+    reservationsAllowed: config.reservationsEnabled && !contract.reservationsDisabled,
+    minimumDurationSeconds: Number(contract.durationMinSeconds),
+    maximumDurationSeconds: Number(contract.durationMaxSeconds),
     rentalRateAtlasPerDay: decimalAmount(BigInt(snapshot.effectiveRate), atlasFactor),
     activeRentalEndsAtMs: active ? unixSecondsToMs(BigInt(active.endTime)) : null,
     reservationCurrency,
     reservationDefender: queued ? queued.borrower.toString() : null,
     reservationBidAtlas: bidAtlas,
     reservationBidPoints: bidPoints,
-    minimumTakeoverBidAtlas: decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor),
-    minimumTakeoverBidPoints: decimalAmount(BigInt(snapshot.minimumBid.points), pointsFactor),
+    minimumTakeoverBidAtlas: queued
+      ? decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor)
+      : 0,
+    minimumTakeoverBidPoints: queued
+      ? decimalAmount(BigInt(snapshot.minimumBid.points), pointsFactor)
+      : 0,
     projectedExpiryTakeoverBidAtlas: queued
       ? decimalAmount(expiryBase * expiryRampBps / 10_000n, atlasFactor)
       : null,

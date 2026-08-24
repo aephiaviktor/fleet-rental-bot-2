@@ -3,6 +3,8 @@ import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from './m
 export type ReservationBlockReason =
   | 'disabled'
   | 'unsafe-operation'
+  | 'reservations-disabled'
+  | 'duration-out-of-range'
   | 'rental-rate-limit'
   | 'bid-limit'
   | 'no-active-rental'
@@ -33,6 +35,14 @@ export function planAtlasReservation(
 ): AtlasReservationPlan {
   if (!entry.enabled) return blocked('disabled', 'Fleet is disabled');
   if (!entry.canSafelyOperate) return blocked('unsafe-operation', 'Fleet is not marked safe to operate');
+  if (!snapshot.reservationsAllowed) return blocked('reservations-disabled', 'Reservations are disabled for this contract');
+  if (entry.requestedDurationSeconds < snapshot.minimumDurationSeconds
+    || entry.requestedDurationSeconds > snapshot.maximumDurationSeconds) {
+    return blocked(
+      'duration-out-of-range',
+      `Requested duration ${entry.requestedDurationSeconds}s is outside ${snapshot.minimumDurationSeconds}-${snapshot.maximumDurationSeconds}s`,
+    );
+  }
   if (snapshot.rentalRateAtlasPerDay > entry.maximumRentalRateAtlasPerDay) {
     return blocked(
       'rental-rate-limit',

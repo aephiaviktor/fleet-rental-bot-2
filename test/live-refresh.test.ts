@@ -10,6 +10,7 @@ const entry = (id: string, enabled = true): FleetWatchEntry => ({
   maximumReservationBidAtlas: 100, canSafelyOperate: true, enabled, comment: '',
 });
 const snapshot: FleetContractSnapshot = {
+  reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,
   rentalRateAtlasPerDay: 90, activeRentalEndsAtMs: null, reservationCurrency: null,
   reservationDefender: null, reservationBidAtlas: null, reservationBidPoints: null,
   minimumTakeoverBidAtlas: 90, minimumTakeoverBidPoints: 0.9,

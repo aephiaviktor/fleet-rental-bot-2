@@ -9,6 +9,7 @@ const entry: FleetWatchEntry = {
   maximumReservationBidAtlas: 120, canSafelyOperate: true, enabled: true, comment: '',
 };
 const snapshot: FleetContractSnapshot = {
+  reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,
   rentalRateAtlasPerDay: 100,
   activeRentalEndsAtMs: 11_000,
   reservationCurrency: 'ATLAS',

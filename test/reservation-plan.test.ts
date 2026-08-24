@@ -10,6 +10,7 @@ const entry: FleetWatchEntry = {
   canSafelyOperate: true, enabled: true, comment: '',
 };
 const snapshot: FleetContractSnapshot = {
+  reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,
   rentalRateAtlasPerDay: 90, activeRentalEndsAtMs: 20_000, reservationCurrency: null,
   reservationDefender: null, reservationBidAtlas: null, reservationBidPoints: null,
   minimumTakeoverBidAtlas: 95, minimumTakeoverBidPoints: 0.95,
@@ -43,6 +44,14 @@ test('blocks disabled, unsafe, stale, and unavailable-bid states', () => {
   assert.equal(planAtlasReservation({ ...entry, canSafelyOperate: false }, snapshot, none, 10_000).kind, 'blocked');
   assert.equal(planAtlasReservation(entry, { ...snapshot, activeRentalEndsAtMs: 9_999 }, none, 10_000).kind, 'blocked');
   assert.equal(planAtlasReservation(entry, { ...snapshot, minimumTakeoverBidAtlas: null }, none, 10_000).kind, 'blocked');
+});
+
+test('blocks owner opt-out and contract-specific duration violations', () => {
+  assert.deepEqual(planAtlasReservation(entry, { ...snapshot, reservationsAllowed: false }, none, 10_000), {
+    kind: 'blocked', reason: 'reservations-disabled', detail: 'Reservations are disabled for this contract',
+  });
+  assert.equal(planAtlasReservation({ ...entry, requestedDurationSeconds: 3_599 }, snapshot, none, 10_000).kind, 'blocked');
+  assert.equal(planAtlasReservation({ ...entry, requestedDurationSeconds: 8_035_201 }, snapshot, none, 10_000).kind, 'blocked');
 });
 
 test('can challenge a Points defender using the protocol ATLAS minimum', () => {

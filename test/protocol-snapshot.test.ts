@@ -10,8 +10,12 @@ function fixture(): ContractSnapshot {
       pointsPerDay: 1_000_000_000n,
       captureRateBps: 10_500n,
       contestedMultiplierMaxBps: 110,
+      reservationsEnabled: true,
     } as never },
-    contract: { address: 'contract' as never, data: { weight: 3 } as never },
+    contract: { address: 'contract' as never, data: {
+      weight: 3, reservationsDisabled: false,
+      durationMinSeconds: 3_600n, durationMaxSeconds: 8_035_200n,
+    } as never },
     activeRental: { address: 'active' as never, data: { endTime: 2_000n } as never },
     queuedRental: { address: 'queued' as never, data: {
       borrower: { toString: () => 'wallet-1' },
@@ -28,6 +32,9 @@ function fixture(): ContractSnapshot {
 test('maps official SRSLY snapshot units without losing reservation currency', () => {
   const mapped = mapContractSnapshot(fixture());
   assert.equal(mapped.rentalRateAtlasPerDay, 90);
+  assert.equal(mapped.reservationsAllowed, true);
+  assert.equal(mapped.minimumDurationSeconds, 3_600);
+  assert.equal(mapped.maximumDurationSeconds, 8_035_200);
   assert.equal(mapped.reservationCurrency, 'ATLAS');
   assert.equal(mapped.reservationBidAtlas, 25);
   assert.equal(mapped.minimumTakeoverBidAtlas, 26.25);
@@ -56,4 +63,13 @@ test('preserves points reservations and does not report ATLAS as locked', () => 
   assert.equal(mapped.reservationCurrency, 'POINTS');
   assert.equal(mapped.reservationBidPoints, 4);
   assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, 0);
+});
+
+test('uses the legal zero bid for the first reservation with no defender', () => {
+  const raw = fixture();
+  raw.queuedRental = null;
+  const mapped = mapContractSnapshot(raw);
+  assert.equal(mapped.minimumTakeoverBidAtlas, 0);
+  assert.equal(mapped.minimumTakeoverBidPoints, 0);
+  assert.equal(mapped.projectedExpiryTakeoverBidAtlas, null);
 });

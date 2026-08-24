@@ -12,6 +12,7 @@ const entry: FleetWatchEntry = {
   canSafelyOperate: true, enabled: true, comment: '',
 };
 const mapped: FleetContractSnapshot = {
+  reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,
   rentalRateAtlasPerDay: 90, activeRentalEndsAtMs: 20_000, reservationCurrency: null,
   reservationDefender: null, reservationBidAtlas: null, reservationBidPoints: null,
   minimumTakeoverBidAtlas: 95, minimumTakeoverBidPoints: 0.95,

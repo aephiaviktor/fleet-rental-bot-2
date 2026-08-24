@@ -26,6 +26,9 @@ export interface FleetWatchEntry {
 }
 
 export interface FleetContractSnapshot {
+  reservationsAllowed: boolean;
+  minimumDurationSeconds: number;
+  maximumDurationSeconds: number;
   rentalRateAtlasPerDay: number;
   activeRentalEndsAtMs: number | null;
   reservationCurrency: ReservationCurrency | null;

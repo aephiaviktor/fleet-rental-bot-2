@@ -34,10 +34,27 @@ export interface FleetContractSnapshot {
   reservationBidPoints: number | null;
   minimumTakeoverBidAtlas: number | null;
   minimumTakeoverBidPoints: number | null;
+  projectedExpiryTakeoverBidAtlas: number | null;
   reservationCreatedAtMs: number | null;
   fleetWeight: number;
   basePointsPerDay: number;
   effectivePointsPerDay: number;
+}
+
+export interface FleetTableRow {
+  entry: FleetWatchEntry;
+  snapshot: FleetContractSnapshot;
+  position: WalletPosition;
+  rentalCostAtlas: number;
+  netOperatingValueAtlas: number | null;
+  reservationAgeMs: number | null;
+  holdingFraction: number | null;
+  bonusIfOutbidNowAtlas: number | null;
+  projectedExpiryFloorBonusAtlas: number | null;
+  maximumRemainingLockMs: number | null;
+  estimatedPoints: number;
+  pointsPerThousandAtlas: number | null;
+  recommendation: Recommendation;
 }
 
 export interface WalletPosition {

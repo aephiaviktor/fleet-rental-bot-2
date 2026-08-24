@@ -30,6 +30,12 @@ export function mapContractSnapshot(snapshot: ContractSnapshot): FleetContractSn
     : null;
   const basePointsPerDay = decimalAmount(BigInt(config.pointsPerDay), pointsFactor);
   const fleetWeight = Number(contract.weight);
+  const defenderBid = queued ? BigInt(queued.bidAtlas) : 0n;
+  const expiryBase = snapshot.effectiveRate > defenderBid ? snapshot.effectiveRate : defenderBid;
+  const expiryRampBps = BigInt(Math.max(
+    Number(config.captureRateBps),
+    10_000 + Math.max(0, Number(config.contestedMultiplierMaxBps) - 100) * 100,
+  ));
 
   return {
     rentalRateAtlasPerDay: decimalAmount(BigInt(snapshot.effectiveRate), atlasFactor),
@@ -40,6 +46,9 @@ export function mapContractSnapshot(snapshot: ContractSnapshot): FleetContractSn
     reservationBidPoints: bidPoints,
     minimumTakeoverBidAtlas: decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor),
     minimumTakeoverBidPoints: decimalAmount(BigInt(snapshot.minimumBid.points), pointsFactor),
+    projectedExpiryTakeoverBidAtlas: queued
+      ? decimalAmount(expiryBase * expiryRampBps / 10_000n, atlasFactor)
+      : null,
     reservationCreatedAtMs: queued ? unixSecondsToMs(BigInt(queued.createdAt)) : null,
     fleetWeight,
     basePointsPerDay,

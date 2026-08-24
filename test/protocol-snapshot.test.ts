@@ -8,6 +8,8 @@ function fixture(): ContractSnapshot {
     config: { address: 'config' as never, data: {
       stardustToAtlas: 100_000_000n,
       pointsPerDay: 1_000_000_000n,
+      captureRateBps: 10_500n,
+      contestedMultiplierMaxBps: 110,
     } as never },
     contract: { address: 'contract' as never, data: { weight: 3 } as never },
     activeRental: { address: 'active' as never, data: { endTime: 2_000n } as never },
@@ -29,6 +31,7 @@ test('maps official SRSLY snapshot units without losing reservation currency', (
   assert.equal(mapped.reservationCurrency, 'ATLAS');
   assert.equal(mapped.reservationBidAtlas, 25);
   assert.equal(mapped.minimumTakeoverBidAtlas, 26.25);
+  assert.equal(mapped.projectedExpiryTakeoverBidAtlas, 99);
   assert.equal(mapped.activeRentalEndsAtMs, 2_000_000);
   assert.equal(mapped.basePointsPerDay, 10);
   assert.equal(mapped.effectivePointsPerDay, 30);

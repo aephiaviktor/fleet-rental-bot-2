@@ -29,6 +29,7 @@ const snapshot: FleetContractSnapshot = {
   rentalRateAtlasPerDay: 90, activeRentalEndsAtMs: null, reservationCurrency: 'ATLAS',
   reservationDefender: 'wallet', reservationBidAtlas: 100, reservationBidPoints: 0,
   minimumTakeoverBidAtlas: 110, minimumTakeoverBidPoints: 1.1, reservationCreatedAtMs: null,
+  projectedExpiryTakeoverBidAtlas: 115,
   fleetWeight: 2, basePointsPerDay: 10, effectivePointsPerDay: 20,
 };
 

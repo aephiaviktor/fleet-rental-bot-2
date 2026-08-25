@@ -44,7 +44,7 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'maximumReservationBid', label: 'Maximum reservation bid', group: 'economics', defaultVisible: true },
   { id: 'reservationCurrency', label: 'Reservation currency', group: 'reservation', defaultVisible: false },
   { id: 'reservationBid', label: 'Current reservation bid', group: 'reservation', defaultVisible: true },
-  { id: 'minimumTakeoverBid', label: 'Minimum takeover bid', group: 'reservation', defaultVisible: true },
+  { id: 'minimumTakeoverBid', label: 'Current min bid', group: 'reservation', defaultVisible: true },
   { id: 'atlasLocked', label: 'ATLAS locked', group: 'reservation', defaultVisible: true },
   { id: 'reservationAge', label: 'Reservation age', group: 'reservation', defaultVisible: false },
   { id: 'holdingFraction', label: 'Holding fraction', group: 'reservation', defaultVisible: true },

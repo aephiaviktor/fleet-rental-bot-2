@@ -38,6 +38,7 @@ export interface FleetContractSnapshot {
   reservationBidPoints: number | null;
   minimumTakeoverBidAtlas: number | null;
   minimumTakeoverBidPoints: number | null;
+  currentMinimumBidAtlas?: number | null;
   projectedExpiryTakeoverBidAtlas: number | null;
   reservationCreatedAtMs: number | null;
   fleetWeight: number;

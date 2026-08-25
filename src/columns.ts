@@ -12,6 +12,10 @@ export type ColumnId =
   | 'reservationCurrency'
   | 'reservationBid'
   | 'minimumTakeoverBid'
+  | 'reservationPremiumPerDay'
+  | 'allInCostPerDay'
+  | 'defenderPrincipalRefund'
+  | 'ownerPremiumShareIfOutbidNow'
   | 'atlasLocked'
   | 'reservationAge'
   | 'holdingFraction'
@@ -43,12 +47,16 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'maximumRentalRate', label: 'Maximum rental rate / day (ATLAS)', group: 'economics', defaultVisible: false },
   { id: 'maximumReservationBid', label: 'Maximum reservation bid (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'reservationCurrency', label: 'Reservation currency', group: 'reservation', defaultVisible: false },
-  { id: 'reservationBid', label: 'Current reservation bid (ATLAS or Points)', group: 'reservation', defaultVisible: true },
-  { id: 'minimumTakeoverBid', label: 'Current min bid (ATLAS)', group: 'reservation', defaultVisible: true },
+  { id: 'reservationBid', label: 'Current reservation premium (ATLAS or Points)', group: 'reservation', defaultVisible: true },
+  { id: 'minimumTakeoverBid', label: 'Minimum takeover premium (ATLAS)', group: 'reservation', defaultVisible: true },
+  { id: 'reservationPremiumPerDay', label: 'Reservation premium / day (ATLAS)', group: 'reservation', defaultVisible: true },
+  { id: 'allInCostPerDay', label: 'Estimated all-in cost / day (ATLAS)', group: 'economics', defaultVisible: true },
+  { id: 'defenderPrincipalRefund', label: 'Defender principal refund (ATLAS)', group: 'reservation', defaultVisible: false },
+  { id: 'ownerPremiumShareIfOutbidNow', label: 'Owner premium share if outbid now (ATLAS)', group: 'reservation', defaultVisible: false },
   { id: 'atlasLocked', label: 'Locked capital (ATLAS)', group: 'reservation', defaultVisible: true },
   { id: 'reservationAge', label: 'Reservation age (ms)', group: 'reservation', defaultVisible: false },
-  { id: 'holdingFraction', label: 'Holding fraction (%)', group: 'reservation', defaultVisible: true },
-  { id: 'bonusIfOutbidNow', label: 'Bonus if outbid now (ATLAS)', group: 'reservation', defaultVisible: true },
+  { id: 'holdingFraction', label: 'Current defender holding fraction (%)', group: 'reservation', defaultVisible: false },
+  { id: 'bonusIfOutbidNow', label: 'Defender bonus if outbid now (ATLAS)', group: 'reservation', defaultVisible: false },
   { id: 'projectedExpiryFloorBonus', label: 'Projected expiry-floor bonus (ATLAS)', group: 'reservation', defaultVisible: false },
   { id: 'maximumRemainingLock', label: 'Maximum remaining lock (ms)', group: 'reservation', defaultVisible: false },
   { id: 'fleetWeight', label: 'Demand weight', group: 'loyalty', defaultVisible: false },

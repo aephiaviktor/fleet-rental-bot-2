@@ -52,6 +52,10 @@ export interface FleetTableRow {
   position: WalletPosition;
   rentalCostAtlas: number;
   netOperatingValueAtlas: number | null;
+  reservationPremiumPerDayAtlas: number | null;
+  allInCostPerDayAtlas: number | null;
+  defenderPrincipalRefundAtlas: number | null;
+  ownerPremiumShareIfOutbidNowAtlas: number | null;
   reservationAgeMs: number | null;
   holdingFraction: number | null;
   bonusIfOutbidNowAtlas: number | null;

@@ -30,6 +30,10 @@ test('builds all derived economics from one source of truth', () => {
   const row = buildFleetTableRow(entry, snapshot, position, 6_000);
   assert.equal(row.rentalCostAtlas, 100);
   assert.equal(row.netOperatingValueAtlas, 200);
+  assert.equal(row.reservationPremiumPerDayAtlas, 53);
+  assert.equal(row.allInCostPerDayAtlas, 153);
+  assert.equal(row.defenderPrincipalRefundAtlas, 100);
+  assert.equal(row.ownerPremiumShareIfOutbidNowAtlas, 3);
   assert.equal(row.reservationAgeMs, 5_000);
   assert.equal(row.holdingFraction, 0.5);
   assert.equal(row.bonusIfOutbidNowAtlas, 3);
@@ -48,6 +52,10 @@ test('does not invent bonus or net-value metrics when inputs are absent', () => 
     6_000,
   );
   assert.equal(row.netOperatingValueAtlas, null);
+  assert.equal(row.reservationPremiumPerDayAtlas, 53);
+  assert.equal(row.allInCostPerDayAtlas, 153);
+  assert.equal(row.defenderPrincipalRefundAtlas, null);
+  assert.equal(row.ownerPremiumShareIfOutbidNowAtlas, null);
   assert.equal(row.bonusIfOutbidNowAtlas, null);
   assert.equal(row.projectedExpiryFloorBonusAtlas, null);
 });

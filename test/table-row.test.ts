@@ -29,7 +29,7 @@ const position: WalletPosition = { status: 'defending', atlasLocked: 100, reserv
 test('builds all derived economics from one source of truth', () => {
   const row = buildFleetTableRow(entry, snapshot, position, 6_000);
   assert.equal(row.rentalCostAtlas, 200);
-  assert.equal(row.netOperatingValueAtlas, 100);
+  assert.equal(row.netOperatingValueAtlas, 400);
   assert.equal(row.reservationAgeMs, 5_000);
   assert.equal(row.holdingFraction, 0.5);
   assert.equal(row.bonusIfOutbidNowAtlas, 3);

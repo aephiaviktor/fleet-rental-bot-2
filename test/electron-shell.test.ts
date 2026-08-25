@@ -38,6 +38,7 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.doesNotMatch(renderer, /summary-locked|summary-defenses|summary-enabled|summary-refreshed/);
   assert.match(renderer, /Stored securely — enter a new value to replace/);
   assert.doesNotMatch(html, /Refresh interval seconds/);
+  assert.match(renderer, /Operating value \/ day/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
   assert.doesNotMatch(html, /class="settings-rail"/);

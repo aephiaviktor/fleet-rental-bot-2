@@ -43,7 +43,7 @@ export function buildFleetTableRow(
     rentalCostAtlas,
     netOperatingValueAtlas: entry.estimatedOperatingValueAtlas == null
       ? null
-      : entry.estimatedOperatingValueAtlas - rentalCostAtlas,
+      : entry.estimatedOperatingValueAtlas * entry.requestedDurationSeconds / 86_400 - rentalCostAtlas,
     reservationAgeMs,
     holdingFraction: heldFraction,
     bonusIfOutbidNowAtlas,

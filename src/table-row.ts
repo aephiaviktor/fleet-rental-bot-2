@@ -1,7 +1,6 @@
 import {
   estimateDefenderBonusAtlas,
   estimatePoints,
-  estimateRentalCostAtlas,
   holdingFraction,
   recommendAction,
 } from './metrics.js';
@@ -13,7 +12,7 @@ export function buildFleetTableRow(
   position: WalletPosition,
   nowMs = Date.now(),
 ): FleetTableRow {
-  const rentalCostAtlas = estimateRentalCostAtlas(snapshot.rentalRateAtlasPerDay, entry.requestedDurationSeconds);
+  const rentalCostAtlas = snapshot.rentalRateAtlasPerDay;
   const heldFraction = position.status === 'defending'
     ? holdingFraction(position.reservedAtMs, snapshot.activeRentalEndsAtMs, nowMs)
     : null;
@@ -43,14 +42,14 @@ export function buildFleetTableRow(
     rentalCostAtlas,
     netOperatingValueAtlas: entry.estimatedOperatingValueAtlas == null
       ? null
-      : entry.estimatedOperatingValueAtlas * entry.requestedDurationSeconds / 86_400 - rentalCostAtlas,
+      : entry.estimatedOperatingValueAtlas - rentalCostAtlas,
     reservationAgeMs,
     holdingFraction: heldFraction,
     bonusIfOutbidNowAtlas,
     projectedExpiryFloorBonusAtlas,
     maximumRemainingLockMs,
     estimatedPoints,
-    pointsPerThousandAtlas: rentalCostAtlas > 0 ? estimatedPoints / rentalCostAtlas * 1_000 : null,
+    pointsPerThousandAtlas: rentalCostAtlas > 0 ? snapshot.effectivePointsPerDay / rentalCostAtlas * 1_000 : null,
     recommendation: recommendAction(entry, snapshot, position),
   };
 }

@@ -26,6 +26,7 @@ export interface FleetWatchEntry {
 }
 
 export interface FleetContractSnapshot {
+  fleetName?: string;
   reservationsAllowed: boolean;
   minimumDurationSeconds: number;
   maximumDurationSeconds: number;

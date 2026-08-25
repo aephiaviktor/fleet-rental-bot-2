@@ -23,6 +23,11 @@ test('rejects duplicate contracts', () => {
   assert.throws(() => parseWatchlist(JSON.stringify({ version: 1, entries: [entry, { ...entry, id: 'fleet-2' }] })), /unique/);
 });
 
+test('allows an empty display label because fleet names resolve from chain', () => {
+  const document = parseWatchlist(JSON.stringify({ version: 1, entries: [{ ...entry, label: '' }] }));
+  assert.equal(document.entries[0].label, '');
+});
+
 test('rejects malformed Solana contract addresses before persistence', () => {
   assert.throws(
     () => parseWatchlist(JSON.stringify({ version: 1, entries: [{ ...entry, contractAddress: 'not-a-solana-address' }] })),

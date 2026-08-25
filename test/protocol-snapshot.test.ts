@@ -30,7 +30,8 @@ function fixture(): ContractSnapshot {
 }
 
 test('maps official SRSLY snapshot units without losing reservation currency', () => {
-  const mapped = mapContractSnapshot(fixture());
+  const mapped = mapContractSnapshot(fixture(), 'Chain Fleet');
+  assert.equal(mapped.fleetName, 'Chain Fleet');
   assert.equal(mapped.rentalRateAtlasPerDay, 90);
   assert.equal(mapped.reservationsAllowed, true);
   assert.equal(mapped.minimumDurationSeconds, 3_600);

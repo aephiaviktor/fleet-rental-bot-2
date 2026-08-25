@@ -1,5 +1,6 @@
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs/promises');
+const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 
 let mainWindow = null;
 
@@ -15,11 +16,45 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
-async function loadRuntimeSettings() {
-  const [{ loadSettings }, { resolveRpcUrl }] = await Promise.all([
-    domainModule('settings-store'), domainModule('rpc-limiter'),
-  ]);
+function secureSettingsPath() {
+  return path.join(app.getPath('userData'), 'secure-settings.json');
+}
+
+async function readSecureApiKey() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable.');
+    const document = JSON.parse(await fs.readFile(secureSettingsPath(), 'utf8'));
+    return safeStorage.decryptString(Buffer.from(String(document.aephiaApiKey || ''), 'base64'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
+async function writeSecureApiKey(value) {
+  if (!String(value || '').trim()) return;
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable; API key was not saved.');
+  const filePath = secureSettingsPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(`${filePath}.tmp`, `${JSON.stringify({ version: 1, aephiaApiKey: safeStorage.encryptString(String(value)).toString('base64') }, null, 2)}\n`, { mode: 0o600 });
+  await fs.rename(`${filePath}.tmp`, filePath);
+}
+
+async function loadSettingsWithSecrets() {
+  const { loadSettings, saveSettings } = await domainModule('settings-store');
   const settings = await loadSettings(settingsPath());
+  let aephiaApiKey = await readSecureApiKey();
+  if (!aephiaApiKey && settings.aephiaApiKey) {
+    aephiaApiKey = settings.aephiaApiKey;
+    await writeSecureApiKey(aephiaApiKey);
+    await saveSettings(settingsPath(), { ...settings, aephiaApiKey: '' });
+  }
+  return { ...settings, aephiaApiKey };
+}
+
+async function loadRuntimeSettings() {
+  const { resolveRpcUrl } = await domainModule('rpc-limiter');
+  const settings = await loadSettingsWithSecrets();
   return { ...settings, rpcUrl: await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl) };
 }
 
@@ -64,14 +99,17 @@ ipcMain.handle('watchlist:save', async (_event, document) => {
 });
 
 ipcMain.handle('settings:load', async () => {
-  const { loadSettings } = await domainModule('settings-store');
-  return loadSettings(settingsPath());
+  const settings = await loadSettingsWithSecrets();
+  return { ...settings, aephiaApiKey: '', secureSettingsStatus: { aephiaApiKey: Boolean(settings.aephiaApiKey) } };
 });
 
 ipcMain.handle('settings:save', async (_event, settings) => {
   const { saveSettings } = await domainModule('settings-store');
-  await saveSettings(settingsPath(), settings);
-  return { ok: true };
+  const current = await loadSettingsWithSecrets();
+  const replacementKey = String(settings?.aephiaApiKey || '').trim();
+  if (replacementKey) await writeSecureApiKey(replacementKey);
+  await saveSettings(settingsPath(), { ...current, ...settings, aephiaApiKey: '' });
+  return { ok: true, secureSettingsStatus: { aephiaApiKey: Boolean(replacementKey || current.aephiaApiKey) } };
 });
 
 ipcMain.handle('rpc-limiter:status', async () => {

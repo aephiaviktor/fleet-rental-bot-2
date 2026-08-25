@@ -8,6 +8,8 @@ test('Electron shell keeps renderer sandboxed and transaction mode read-only', a
   assert.match(main, /nodeIntegration:\s*false/);
   assert.match(main, /sandbox:\s*true/);
   assert.match(main, /readOnly:\s*true/);
+  assert.match(main, /safeStorage\.encryptString/);
+  assert.match(main, /safeStorage\.decryptString/);
 });
 
 test('renderer uses a restrictive content security policy', async () => {
@@ -33,6 +35,9 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.match(html, /USTUR player profile/);
   assert.match(renderer, /nav-collapsed/);
   assert.match(renderer, /Status unavailable/);
+  assert.doesNotMatch(renderer, /summary-locked|summary-defenses|summary-enabled|summary-refreshed/);
+  assert.match(renderer, /Stored securely — enter a new value to replace/);
+  assert.doesNotMatch(html, /Refresh interval seconds/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
   assert.doesNotMatch(html, /class="settings-rail"/);

@@ -16,7 +16,7 @@ function unixSecondsToMs(value: bigint): number | null {
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : null;
 }
 
-export function mapContractSnapshot(snapshot: ContractSnapshot): FleetContractSnapshot {
+export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''): FleetContractSnapshot {
   const config = snapshot.config.data;
   const contract = snapshot.contract.data;
   const queued = snapshot.queuedRental?.data ?? null;
@@ -38,6 +38,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot): FleetContractSn
   ));
 
   return {
+    fleetName,
     reservationsAllowed: config.reservationsEnabled && !contract.reservationsDisabled,
     minimumDurationSeconds: Number(contract.durationMinSeconds),
     maximumDurationSeconds: Number(contract.durationMaxSeconds),
@@ -75,7 +76,11 @@ export function deriveWalletPosition(snapshot: FleetContractSnapshot, walletAddr
 }
 
 export async function loadContractSnapshot(contractAddress: string, rpcUrl: string): Promise<FleetContractSnapshot> {
-  return mapContractSnapshot(await loadRawContractSnapshot(contractAddress, rpcUrl));
+  const snapshot = await loadRawContractSnapshot(contractAddress, rpcUrl);
+  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  const fleet = await core.fetchFleet(snapshot.contract.data.fleet.toString(), rpcUrl);
+  const fleetName = Buffer.from(fleet.fleetLabel).toString('utf8').replace(/\0/g, '').trim();
+  return mapContractSnapshot(snapshot, fleetName || snapshot.contract.data.fleet.toString());
 }
 
 export async function loadRawContractSnapshot(contractAddress: string, rpcUrl: string): Promise<ContractSnapshot> {

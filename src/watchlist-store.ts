@@ -18,12 +18,12 @@ function finiteNonNegative(value: unknown, field: string): number {
 export function validateWatchEntry(value: unknown): FleetWatchEntry {
   if (!value || typeof value !== 'object') throw new Error('Watchlist entry must be an object');
   const entry = value as Partial<FleetWatchEntry>;
-  for (const field of ['id', 'label', 'contractAddress'] as const) {
+  for (const field of ['id', 'contractAddress'] as const) {
     if (typeof entry[field] !== 'string' || !entry[field]!.trim()) throw new Error(`${field} is required`);
   }
   return {
     id: entry.id!.trim(),
-    label: entry.label!.trim(),
+    label: typeof entry.label === 'string' ? entry.label.trim() : '',
     contractAddress: requireSolanaAddress(entry.contractAddress!, 'contractAddress'),
     requestedDurationSeconds: finiteNonNegative(entry.requestedDurationSeconds, 'requestedDurationSeconds'),
     estimatedOperatingValueAtlas: entry.estimatedOperatingValueAtlas == null

@@ -15,6 +15,14 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+async function loadRuntimeSettings() {
+  const [{ loadSettings }, { resolveRpcUrl }] = await Promise.all([
+    domainModule('settings-store'), domainModule('rpc-limiter'),
+  ]);
+  const settings = await loadSettings(settingsPath());
+  return { ...settings, rpcUrl: await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl) };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -66,23 +74,28 @@ ipcMain.handle('settings:save', async (_event, settings) => {
   return { ok: true };
 });
 
+ipcMain.handle('rpc-limiter:status', async () => {
+  const { getRpcLimiterStatus } = await domainModule('rpc-limiter');
+  return getRpcLimiterStatus();
+});
+
 ipcMain.handle('watchlist:refresh', async () => {
-  const [{ loadWatchlist }, { loadSettings }, { refreshWatchlist }] = await Promise.all([
-    domainModule('watchlist-store'), domainModule('settings-store'), domainModule('live-refresh'),
+  const [{ loadWatchlist }, { refreshWatchlist }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('live-refresh'),
   ]);
   const [watchlist, settings] = await Promise.all([
-    loadWatchlist(watchlistPath()), loadSettings(settingsPath()),
+    loadWatchlist(watchlistPath()), loadRuntimeSettings(),
   ]);
   return refreshWatchlist(watchlist.entries, settings);
 });
 
 ipcMain.handle('reservation:review', async (_event, entryId) => {
   if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');
-  const [{ loadWatchlist }, { loadSettings }, { prepareReservationReview }] = await Promise.all([
-    domainModule('watchlist-store'), domainModule('settings-store'), domainModule('reservation-review'),
+  const [{ loadWatchlist }, { prepareReservationReview }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('reservation-review'),
   ]);
   const [watchlist, settings] = await Promise.all([
-    loadWatchlist(watchlistPath()), loadSettings(settingsPath()),
+    loadWatchlist(watchlistPath()), loadRuntimeSettings(),
   ]);
   const entry = watchlist.entries.find((candidate) => candidate.id === entryId);
   if (!entry) throw new Error('Watchlist entry not found');
@@ -91,11 +104,11 @@ ipcMain.handle('reservation:review', async (_event, entryId) => {
 
 ipcMain.handle('reservation:simulate', async (_event, entryId) => {
   if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');
-  const [{ loadWatchlist }, { loadSettings }, { simulateReservation }] = await Promise.all([
-    domainModule('watchlist-store'), domainModule('settings-store'), domainModule('reservation-simulation'),
+  const [{ loadWatchlist }, { simulateReservation }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('reservation-simulation'),
   ]);
   const [watchlist, settings] = await Promise.all([
-    loadWatchlist(watchlistPath()), loadSettings(settingsPath()),
+    loadWatchlist(watchlistPath()), loadRuntimeSettings(),
   ]);
   const entry = watchlist.entries.find((candidate) => candidate.id === entryId);
   if (!entry) throw new Error('Watchlist entry not found');

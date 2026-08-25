@@ -17,14 +17,20 @@ test('renderer uses a restrictive content security policy', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
 });
 
-test('layout follows the Aephia app family with inline fleet rows and sidebar settings', async () => {
+test('layout follows My Star Atlas with collapsible left navigation and settings drawer', async () => {
   const html = await readFile('ui/index.html', 'utf8');
-  assert.match(html, /class="app-shell"/);
-  assert.match(html, /class="settings-rail"/);
+  const renderer = await readFile('ui/app.js', 'utf8');
+  assert.match(html, /class="left-nav"/);
+  assert.match(html, /id="sidebar-toggle"/);
+  assert.match(html, /id="open-settings"/);
+  assert.match(html, /id="open-rpc-usage"/);
+  assert.match(html, /class="settings-drawer"/);
+  assert.match(html, /Aephia API key/);
+  assert.match(html, /USTUR player profile/);
+  assert.match(renderer, /nav-collapsed/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
-  assert.doesNotMatch(html, /id="fleet-dialog"/);
-  assert.doesNotMatch(html, /id="settings-dialog"/);
+  assert.doesNotMatch(html, /class="settings-rail"/);
 });
 
 test('watchlist writes are exposed only through the validated IPC boundary', async () => {

@@ -4,18 +4,26 @@ import { requireSolanaAddress } from './solana-address.js';
 
 export interface AppSettings {
   version: 1;
+  aephiaApiKey: string;
+  usturPlayerProfile: string;
+  useRpcLimiter: boolean;
   rpcUrl: string;
-  walletAddress: string;
-  challengerProfileAddress: string;
   refreshIntervalSeconds: number;
+  /** Retained only to migrate early 0.1.x settings; no longer shown in the UI. */
+  walletAddress: string;
+  /** Retained only to keep unsigned review compatibility during migration. */
+  challengerProfileAddress: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
+  aephiaApiKey: '',
+  usturPlayerProfile: '',
+  useRpcLimiter: true,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
+  refreshIntervalSeconds: 60,
   walletAddress: '',
   challengerProfileAddress: '',
-  refreshIntervalSeconds: 60,
 };
 
 export function validateSettings(value: unknown): AppSettings {
@@ -26,25 +34,27 @@ export function validateSettings(value: unknown): AppSettings {
   let url: URL;
   try { url = new URL(candidate.rpcUrl); } catch { throw new Error('RPC URL must be a valid URL'); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('RPC URL must use HTTP or HTTPS');
-  if (typeof candidate.walletAddress !== 'string') throw new Error('Wallet address must be a string');
-  const challengerProfileAddress = candidate.challengerProfileAddress ?? '';
-  if (typeof challengerProfileAddress !== 'string') throw new Error('SAGE profile address must be a string');
+  const aephiaApiKey = candidate.aephiaApiKey ?? '';
+  if (typeof aephiaApiKey !== 'string') throw new Error('Aephia API key must be a string');
+  const legacyProfile = candidate.challengerProfileAddress ?? '';
+  const usturPlayerProfile = candidate.usturPlayerProfile ?? legacyProfile;
+  if (typeof usturPlayerProfile !== 'string') throw new Error('USTUR player profile must be a string');
+  const walletAddress = candidate.walletAddress ?? '';
+  if (typeof walletAddress !== 'string') throw new Error('Wallet address must be a string');
   const refreshIntervalSeconds = candidate.refreshIntervalSeconds;
-  if (!Number.isInteger(refreshIntervalSeconds)
-    || refreshIntervalSeconds! < 15
-    || refreshIntervalSeconds! > 3600) {
+  if (!Number.isInteger(refreshIntervalSeconds) || refreshIntervalSeconds! < 15 || refreshIntervalSeconds! > 3600) {
     throw new Error('Refresh interval must be between 15 and 3600 seconds');
   }
+  const normalizedProfile = usturPlayerProfile.trim() === '' ? '' : requireSolanaAddress(usturPlayerProfile, 'usturPlayerProfile');
   return {
     version: 1,
+    aephiaApiKey: aephiaApiKey.trim(),
+    usturPlayerProfile: normalizedProfile,
+    useRpcLimiter: candidate.useRpcLimiter ?? true,
     rpcUrl: candidate.rpcUrl,
-    walletAddress: candidate.walletAddress.trim() === ''
-      ? ''
-      : requireSolanaAddress(candidate.walletAddress, 'walletAddress'),
-    challengerProfileAddress: challengerProfileAddress.trim() === ''
-      ? ''
-      : requireSolanaAddress(challengerProfileAddress, 'challengerProfileAddress'),
     refreshIntervalSeconds: refreshIntervalSeconds!,
+    walletAddress: walletAddress.trim() === '' ? '' : requireSolanaAddress(walletAddress, 'walletAddress'),
+    challengerProfileAddress: normalizedProfile,
   };
 }
 

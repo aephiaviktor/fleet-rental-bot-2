@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, validateSettings } from '../src/settings-store.js';
 
-test('missing settings use conservative mainnet defaults', async () => {
+const profile = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
+
+test('missing settings use RPC limiter and conservative defaults', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   assert.deepEqual(await loadSettings(join(root, 'missing.json')), DEFAULT_SETTINGS);
+  assert.equal(DEFAULT_SETTINGS.useRpcLimiter, true);
 });
 
 test('settings require HTTP RPC and bounded refresh interval', () => {
@@ -15,27 +18,24 @@ test('settings require HTTP RPC and bounded refresh interval', () => {
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, refreshIntervalSeconds: 5 }), /between 15 and 3600/);
 });
 
-test('wallet identification must be empty or a valid Solana address', () => {
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, walletAddress: 'wallet' }), /valid Solana address/);
-  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, walletAddress: '' }).walletAddress, '');
+test('USTUR player profile must be empty or a valid Solana address', () => {
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, usturPlayerProfile: 'profile' }), /valid Solana address/);
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, usturPlayerProfile: profile }).challengerProfileAddress, profile);
 });
 
-test('SAGE profile must be empty or a valid Solana address', () => {
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, challengerProfileAddress: 'profile' }), /valid Solana address/);
-  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, challengerProfileAddress: '' }).challengerProfileAddress, '');
+test('early version-one settings migrate the legacy SAGE profile into USTUR', () => {
+  const legacy = { ...DEFAULT_SETTINGS, challengerProfileAddress: profile } as Partial<typeof DEFAULT_SETTINGS>;
+  delete legacy.usturPlayerProfile;
+  assert.equal(validateSettings(legacy).usturPlayerProfile, profile);
 });
 
-test('older version-one settings without a SAGE profile migrate safely', () => {
-  const legacy = { ...DEFAULT_SETTINGS } as Partial<typeof DEFAULT_SETTINGS>;
-  delete legacy.challengerProfileAddress;
-  assert.equal(validateSettings(legacy).challengerProfileAddress, '');
-});
-
-test('settings persist atomically without exposing the RPC URL permissions', async () => {
+test('settings persist API and limiter controls atomically', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   const file = join(root, 'settings.json');
-  const wallet = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
-  await saveSettings(file, { ...DEFAULT_SETTINGS, walletAddress: wallet });
-  assert.equal((await loadSettings(file)).walletAddress, wallet);
+  await saveSettings(file, { ...DEFAULT_SETTINGS, aephiaApiKey: 'api-key', usturPlayerProfile: profile, useRpcLimiter: false });
+  const loaded = await loadSettings(file);
+  assert.equal(loaded.aephiaApiKey, 'api-key');
+  assert.equal(loaded.usturPlayerProfile, profile);
+  assert.equal(loaded.useRpcLimiter, false);
   assert.match(await readFile(file, 'utf8'), /"version": 1/);
 });

@@ -24,10 +24,15 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.match(html, /id="sidebar-toggle"/);
   assert.match(html, /id="open-settings"/);
   assert.match(html, /id="open-rpc-usage"/);
+  assert.match(html, /class="nav-columns"/);
+  assert.match(html, /id="column-options"/);
+  assert.doesNotMatch(html, /id="columns-button"/);
+  assert.doesNotMatch(html, /id="refresh-button"/);
   assert.match(html, /class="settings-drawer"/);
   assert.match(html, /Aephia API key/);
   assert.match(html, /USTUR player profile/);
   assert.match(renderer, /nav-collapsed/);
+  assert.match(renderer, /Status unavailable/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
   assert.doesNotMatch(html, /class="settings-rail"/);

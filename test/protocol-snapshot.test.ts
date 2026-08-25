@@ -39,7 +39,7 @@ test('maps official SRSLY snapshot units without losing reservation currency', (
   assert.equal(mapped.reservationCurrency, 'ATLAS');
   assert.equal(mapped.reservationBidAtlas, 25);
   assert.equal(mapped.minimumTakeoverBidAtlas, 26.25);
-  assert.equal(mapped.currentMinimumBidAtlas, 51.25);
+  assert.equal(mapped.currentMinimumBidAtlas, 26.25);
   assert.equal(mapped.projectedExpiryTakeoverBidAtlas, 99);
   assert.equal(mapped.activeRentalEndsAtMs, 2_000_000);
   assert.equal(mapped.basePointsPerDay, 10);

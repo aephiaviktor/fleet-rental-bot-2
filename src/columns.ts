@@ -51,7 +51,7 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'bonusIfOutbidNow', label: 'Bonus if outbid now (ATLAS)', group: 'reservation', defaultVisible: true },
   { id: 'projectedExpiryFloorBonus', label: 'Projected expiry-floor bonus (ATLAS)', group: 'reservation', defaultVisible: false },
   { id: 'maximumRemainingLock', label: 'Maximum remaining lock (ms)', group: 'reservation', defaultVisible: false },
-  { id: 'fleetWeight', label: 'Fleet weight', group: 'loyalty', defaultVisible: true },
+  { id: 'fleetWeight', label: 'Demand weight', group: 'loyalty', defaultVisible: false },
   { id: 'estimatedPointsPerDay', label: 'Estimated Points / day', group: 'loyalty', defaultVisible: true },
   { id: 'estimatedPoints', label: 'Estimated Points', group: 'loyalty', defaultVisible: true },
   { id: 'pointsPerThousandAtlas', label: 'Points per 1,000 ATLAS', group: 'loyalty', defaultVisible: false },

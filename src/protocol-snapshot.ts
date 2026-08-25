@@ -54,9 +54,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
     minimumTakeoverBidPoints: queued
       ? decimalAmount(BigInt(snapshot.minimumBid.points), pointsFactor)
       : 0,
-    currentMinimumBidAtlas: queued
-      ? bidAtlas! + decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor)
-      : decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor),
+    currentMinimumBidAtlas: decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor),
     projectedExpiryTakeoverBidAtlas: queued
       ? decimalAmount(expiryBase * expiryRampBps / 10_000n, atlasFactor)
       : null,

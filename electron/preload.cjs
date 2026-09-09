@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   saveWatchlist: (document) => ipcRenderer.invoke('watchlist:save', document),
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  removeHotWallet: () => ipcRenderer.invoke('settings:remove-hot-wallet'),
   getPlayerFaction: () => ipcRenderer.invoke('profile:faction'),
   getRpcLimiterStatus: () => ipcRenderer.invoke('rpc-limiter:status'),
   refreshWatchlist: () => ipcRenderer.invoke('watchlist:refresh'),

@@ -2,6 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const { configureInstance } = require('./instance.cjs');
+const { getHotWalletAddressFromSecret } = require('./wallet-secret.cjs');
 
 const INSTANCE = configureInstance(app, process.argv);
 const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE.instance });
@@ -23,42 +24,68 @@ function secureSettingsPath() {
   return path.join(app.getPath('userData'), 'secure-settings.json');
 }
 
-async function readSecureApiKey() {
+async function readSecureDocument() {
   try {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable.');
     const document = JSON.parse(await fs.readFile(secureSettingsPath(), 'utf8'));
-    return safeStorage.decryptString(Buffer.from(String(document.aephiaApiKey || ''), 'base64'));
+    return document && typeof document === 'object' ? document : { version: 1 };
   } catch (error) {
-    if (error?.code === 'ENOENT') return '';
+    if (error?.code === 'ENOENT') return { version: 1 };
     throw error;
   }
 }
 
-async function writeSecureApiKey(value) {
-  if (!String(value || '').trim()) return;
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable; API key was not saved.');
+async function readSecureValue(key) {
+  const document = await readSecureDocument();
+  const encrypted = String(document[key] || '');
+  if (!encrypted) return '';
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable.');
+  return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+}
+
+async function writeSecureValues(replacements) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS safe storage is unavailable; secure settings were not changed.');
+  const document = await readSecureDocument();
+  for (const [key, value] of Object.entries(replacements)) {
+    document[key] = value ? safeStorage.encryptString(String(value)).toString('base64') : '';
+  }
+  document.version = 1;
   const filePath = secureSettingsPath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(`${filePath}.tmp`, `${JSON.stringify({ version: 1, aephiaApiKey: safeStorage.encryptString(String(value)).toString('base64') }, null, 2)}\n`, { mode: 0o600 });
-  await fs.rename(`${filePath}.tmp`, filePath);
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+  await fs.rename(temporaryPath, filePath);
 }
 
 async function loadSettingsWithSecrets() {
   const { loadSettings, saveSettings } = await domainModule('settings-store');
   const settings = await loadSettings(settingsPath());
-  let aephiaApiKey = await readSecureApiKey();
+  let aephiaApiKey = await readSecureValue('aephiaApiKey');
   if (!aephiaApiKey && settings.aephiaApiKey) {
     aephiaApiKey = settings.aephiaApiKey;
-    await writeSecureApiKey(aephiaApiKey);
+    await writeSecureValues({ aephiaApiKey });
     await saveSettings(settingsPath(), { ...settings, aephiaApiKey: '' });
   }
-  return { ...settings, aephiaApiKey };
+  return { ...settings, aephiaApiKey, hotWalletSecret: await readSecureValue('hotWalletSecret') };
 }
 
 async function loadRuntimeSettings() {
   const { resolveRpcUrl } = await domainModule('rpc-limiter');
   const settings = await loadSettingsWithSecrets();
-  return { ...settings, rpcUrl: await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl) };
+  const walletAddress = settings.hotWalletSecret
+    ? getHotWalletAddressFromSecret(settings.hotWalletSecret)
+    : settings.walletAddress;
+  return { ...settings, walletAddress, rpcUrl: await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl) };
+}
+
+function secureSettingsStatus(settings) {
+  return {
+    aephiaApiKey: Boolean(settings.aephiaApiKey),
+    hotWalletSecret: Boolean(settings.hotWalletSecret),
+  };
+}
+
+function hotWalletAddress(settings) {
+  return settings.hotWalletSecret ? getHotWalletAddressFromSecret(settings.hotWalletSecret) : '';
 }
 
 function createWindow() {
@@ -105,16 +132,37 @@ ipcMain.handle('watchlist:save', async (_event, document) => {
 
 ipcMain.handle('settings:load', async () => {
   const settings = await loadSettingsWithSecrets();
-  return { ...settings, aephiaApiKey: '', secureSettingsStatus: { aephiaApiKey: Boolean(settings.aephiaApiKey) } };
+  return {
+    ...settings,
+    aephiaApiKey: '',
+    hotWalletSecret: '',
+    hotWalletAddress: hotWalletAddress(settings),
+    secureSettingsStatus: secureSettingsStatus(settings),
+  };
 });
 
 ipcMain.handle('settings:save', async (_event, settings) => {
   const { saveSettings } = await domainModule('settings-store');
   const current = await loadSettingsWithSecrets();
   const replacementKey = String(settings?.aephiaApiKey || '').trim();
-  if (replacementKey) await writeSecureApiKey(replacementKey);
-  await saveSettings(settingsPath(), { ...current, ...settings, aephiaApiKey: '' });
-  return { ok: true, secureSettingsStatus: { aephiaApiKey: Boolean(replacementKey || current.aephiaApiKey) } };
+  const replacementWallet = String(settings?.hotWalletSecret || '').trim();
+  const nextWallet = replacementWallet || current.hotWalletSecret;
+  if (replacementWallet) getHotWalletAddressFromSecret(replacementWallet);
+  const replacements = {};
+  if (replacementKey) replacements.aephiaApiKey = replacementKey;
+  if (replacementWallet) replacements.hotWalletSecret = replacementWallet;
+  if (Object.keys(replacements).length) await writeSecureValues(replacements);
+  await saveSettings(settingsPath(), { ...current, ...settings, aephiaApiKey: '', walletAddress: nextWallet ? getHotWalletAddressFromSecret(nextWallet) : current.walletAddress });
+  const next = { ...current, aephiaApiKey: replacementKey || current.aephiaApiKey, hotWalletSecret: nextWallet };
+  return { ok: true, hotWalletAddress: hotWalletAddress(next), secureSettingsStatus: secureSettingsStatus(next) };
+});
+
+ipcMain.handle('settings:remove-hot-wallet', async () => {
+  const { saveSettings } = await domainModule('settings-store');
+  const current = await loadSettingsWithSecrets();
+  await saveSettings(settingsPath(), { ...current, aephiaApiKey: '', walletAddress: '' });
+  await writeSecureValues({ hotWalletSecret: '' });
+  return { ok: true, hotWalletAddress: '', secureSettingsStatus: { hotWalletSecret: false } };
 });
 
 ipcMain.handle('profile:faction', async () => {

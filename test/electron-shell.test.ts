@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('Electron shell keeps renderer sandboxed and transaction mode read-only', async () => {
+test('Electron shell keeps renderer sandboxed and limits automated signing to LCFS', async () => {
   const main = await readFile('electron/main.cjs', 'utf8');
   assert.match(main, /contextIsolation:\s*true/);
   assert.match(main, /nodeIntegration:\s*false/);
   assert.match(main, /sandbox:\s*true/);
-  assert.match(main, /readOnly:\s*true/);
+  assert.match(main, /readOnly:\s*false/);
+  assert.match(main, /scheduleLcfsAttempts/);
+  assert.match(main, /recordLcfsAttempt/);
+  assert.match(main, /executeLcfsAttempt/);
   assert.match(main, /safeStorage\.encryptString/);
   assert.match(main, /safeStorage\.decryptString/);
   assert.match(main, /configureInstance/);

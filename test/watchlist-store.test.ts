@@ -9,7 +9,7 @@ import { loadWatchlist, parseWatchlist, saveWatchlist, type WatchlistDocument } 
 const entry = {
   id: 'fleet-1', label: 'Fleet One', contractAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7', requestedDurationSeconds: 3600,
   estimatedNetValueAtlas: 50, maximumRentalRateAtlasPerDay: 100,
-  maximumReservationBidAtlas: 20, canSafelyOperate: true, enabled: true, comment: 'Attractive',
+  maximumReservationBidAtlas: 20, canSafelyOperate: true, enabled: true, comment: 'Attractive', lcfs: false,
 };
 
 test('missing watchlist loads as an empty safe document', async () => {

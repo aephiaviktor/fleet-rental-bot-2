@@ -7,6 +7,8 @@ const { getHotWalletAddressFromSecret } = require('./wallet-secret.cjs');
 const INSTANCE = configureInstance(app, process.argv);
 const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE.instance });
 let mainWindow = null;
+const lcfsTimers = new Map();
+let lcfsStateWrite = Promise.resolve();
 
 async function domainModule(name) {
   return import(`../dist/src/${name}.js`);
@@ -22,6 +24,102 @@ function settingsPath() {
 
 function secureSettingsPath() {
   return path.join(app.getPath('userData'), 'secure-settings.json');
+}
+
+function lcfsStatePath() {
+  return path.join(app.getPath('userData'), 'lcfs-state.json');
+}
+
+async function readLcfsState() {
+  try {
+    const value = JSON.parse(await fs.readFile(lcfsStatePath(), 'utf8'));
+    return value && Array.isArray(value.attempts) ? value : { version: 1, attempts: [] };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { version: 1, attempts: [] };
+    throw error;
+  }
+}
+
+async function recordLcfsAttempt(key, status, detail = '') {
+  let recorded = false;
+  lcfsStateWrite = lcfsStateWrite.catch(() => {}).then(async () => {
+    const state = await readLcfsState();
+    const existing = state.attempts.find((attempt) => attempt.key === key);
+    if (existing && status === 'started') return;
+    if (existing) Object.assign(existing, { status, detail, updatedAt: new Date().toISOString() });
+    else state.attempts.push({ key, status, detail, updatedAt: new Date().toISOString() });
+    state.attempts = state.attempts.slice(-500);
+    const filePath = lcfsStatePath();
+    const temporaryPath = `${filePath}.${process.pid}.tmp`;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    await fs.rename(temporaryPath, filePath);
+    recorded = true;
+  });
+  await lcfsStateWrite;
+  return recorded;
+}
+
+function emitLcfsStatus(entryId, status, detail) {
+  if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('lcfs:status', { entryId, status, detail });
+}
+
+async function scheduleLcfsAttempts(watchlist, settings, results) {
+  const [{ evaluateLcfsEligibility, executeLcfsAttempt, lcfsAttemptKey }, state] = await Promise.all([
+    domainModule('lcfs'), readLcfsState(),
+  ]);
+  const attempted = new Set(state.attempts.map((attempt) => attempt.key));
+  const eligibleKeys = new Set();
+  if (!settings.useHeliusSender || !settings.hotWalletSecret) {
+    for (const timer of lcfsTimers.values()) clearTimeout(timer);
+    lcfsTimers.clear();
+    return;
+  }
+  const nowMs = Date.now();
+  for (const result of results) {
+    if (!result.ok) continue;
+    const entry = watchlist.entries.find((candidate) => candidate.id === result.id);
+    if (!entry?.lcfs) continue;
+    const decision = evaluateLcfsEligibility(entry, result.row.snapshot, result.row.position, settings.lcfsLeadTimeSeconds, nowMs);
+    if (decision.kind === 'blocked') continue;
+    const key = lcfsAttemptKey(entry.id, decision.plan.activeRentalEndsAtMs);
+    eligibleKeys.add(key);
+    if (attempted.has(key) || lcfsTimers.has(key)) continue;
+    const delay = Math.max(0, decision.executeAtMs - nowMs);
+    if (delay > 2_147_000_000) continue;
+    const timer = setTimeout(async () => {
+      lcfsTimers.delete(key);
+      try {
+        if (!await recordLcfsAttempt(key, 'started')) return;
+        emitLcfsStatus(entry.id, 'sending', 'Re-checking live limits and submitting LCFS bid');
+        const [latestWatchlist, latestSettings] = await Promise.all([
+          (await domainModule('watchlist-store')).loadWatchlist(watchlistPath()), loadRuntimeSettings(),
+        ]);
+        const latestEntry = latestWatchlist.entries.find((candidate) => candidate.id === entry.id);
+        if (!latestEntry) throw new Error('Watchlist entry no longer exists');
+        if (latestEntry.contractAddress !== entry.contractAddress) throw new Error('Rental contract changed after this LCFS attempt was scheduled');
+        const outcome = await executeLcfsAttempt(
+          latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {}, decision.plan.activeRentalEndsAtMs,
+        );
+        if (outcome.kind === 'submitted') {
+          await recordLcfsAttempt(key, 'submitted', outcome.signature);
+          emitLcfsStatus(entry.id, 'submitted', `LCFS transaction submitted: ${outcome.signature}`);
+        } else {
+          await recordLcfsAttempt(key, 'blocked', outcome.reason);
+          emitLcfsStatus(entry.id, 'blocked', outcome.reason);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await recordLcfsAttempt(key, 'failed', detail).catch(() => {});
+        emitLcfsStatus(entry.id, 'failed', detail);
+      }
+    }, delay);
+    lcfsTimers.set(key, timer);
+    emitLcfsStatus(entry.id, 'scheduled', `LCFS bid scheduled for ${new Date(decision.executeAtMs).toLocaleTimeString()}`);
+  }
+  for (const [key, timer] of lcfsTimers) {
+    if (!eligibleKeys.has(key)) { clearTimeout(timer); lcfsTimers.delete(key); }
+  }
 }
 
 async function readSecureDocument() {
@@ -112,7 +210,7 @@ function createWindow() {
 ipcMain.handle('app:get-bootstrap', async () => ({
   version: app.getVersion(),
   dataDirectory: app.getPath('userData'),
-  readOnly: true,
+  readOnly: false,
   instance: INSTANCE.instance,
 }));
 
@@ -187,7 +285,9 @@ ipcMain.handle('watchlist:refresh', async () => {
   const [watchlist, settings] = await Promise.all([
     loadWatchlist(watchlistPath()), loadRuntimeSettings(),
   ]);
-  return refreshWatchlist(watchlist.entries, settings);
+  const results = await refreshWatchlist(watchlist.entries, settings);
+  await scheduleLcfsAttempts(watchlist, settings, results);
+  return results;
 });
 
 ipcMain.handle('reservation:review', async (_event, entryId) => {
@@ -232,6 +332,8 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on('window-all-closed', () => {
+    for (const timer of lcfsTimers.values()) clearTimeout(timer);
+    lcfsTimers.clear();
     if (process.platform !== 'darwin') app.quit();
   });
 }

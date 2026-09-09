@@ -6,7 +6,7 @@ import { buildFleetTableRow } from '../src/table-row.js';
 const entry: FleetWatchEntry = {
   id: 'one', label: 'One', contractAddress: 'contract', requestedDurationSeconds: 2 * 86_400,
   estimatedNetValueAtlas: 300, maximumRentalRateAtlasPerDay: 110,
-  maximumReservationBidAtlas: 120, canSafelyOperate: true, enabled: true, comment: '',
+  maximumReservationBidAtlas: 120, canSafelyOperate: true, enabled: true, comment: '', lcfs: false,
 };
 const snapshot: FleetContractSnapshot = {
   reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,

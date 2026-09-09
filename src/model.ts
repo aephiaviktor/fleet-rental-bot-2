@@ -15,6 +15,7 @@ export interface FleetWatchEntry {
   canSafelyOperate: boolean;
   enabled: boolean;
   comment: string;
+  lcfs: boolean;
 }
 
 export interface FleetContractSnapshot {

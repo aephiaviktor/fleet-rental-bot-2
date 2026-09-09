@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from '../src/settings-store.js';
 const entry = (id: string, enabled = true): FleetWatchEntry => ({
   id, label: id, contractAddress: `contract-${id}`, requestedDurationSeconds: 86_400,
   estimatedNetValueAtlas: null, maximumRentalRateAtlasPerDay: 100,
-  maximumReservationBidAtlas: 100, canSafelyOperate: true, enabled, comment: '',
+  maximumReservationBidAtlas: 100, canSafelyOperate: true, enabled, comment: '', lcfs: false,
 });
 const snapshot: FleetContractSnapshot = {
   reservationsAllowed: true, minimumDurationSeconds: 3_600, maximumDurationSeconds: 8_035_200,

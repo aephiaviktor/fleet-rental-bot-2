@@ -34,6 +34,7 @@ export function validateWatchEntry(value: unknown): FleetWatchEntry {
     canSafelyOperate: entry.canSafelyOperate !== false,
     enabled: entry.enabled !== false,
     comment: typeof entry.comment === 'string' ? entry.comment : '',
+    lcfs: entry.lcfs === true,
   };
 }
 

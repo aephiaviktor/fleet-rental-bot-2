@@ -20,7 +20,7 @@ test('hide-sensitive-data lives in Settings and masks only the RPC URL', async (
   assert.doesNotMatch(styles, /sensitive-mask/);
 });
 
-test('hot-wallet secret is write-only and signing remains disabled', async () => {
+test('hot-wallet secret is write-only and automated signing is limited to LCFS', async () => {
   const [main, preload, html] = await Promise.all([
     readFile(new URL('../../electron/main.cjs', import.meta.url), 'utf8'),
     readFile(new URL('../../electron/preload.cjs', import.meta.url), 'utf8'),
@@ -31,6 +31,7 @@ test('hot-wallet secret is write-only and signing remains disabled', async () =>
   assert.match(main, /getHotWalletAddressFromSecret/);
   assert.match(main, /secureSettingsStatus.*hotWalletSecret/s);
   assert.match(preload, /removeHotWallet/);
-  assert.match(html, /Signing disabled/);
+  assert.match(html, /manual signing remains disabled/i);
+  assert.match(html, /only for checked LCFS rows/i);
   assert.doesNotMatch(preload, /loadHotWalletSecret|getHotWalletSecret/);
 });

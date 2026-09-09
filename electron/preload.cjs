@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   refreshWatchlist: () => ipcRenderer.invoke('watchlist:refresh'),
   prepareReservationReview: (entryId) => ipcRenderer.invoke('reservation:review', entryId),
   simulateReservation: (entryId) => ipcRenderer.invoke('reservation:simulate', entryId),
+  onLcfsStatus: (listener) => ipcRenderer.on('lcfs:status', (_event, status) => listener(status)),
 });

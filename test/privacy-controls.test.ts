@@ -2,21 +2,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('hide-sensitive-data starts enabled and masks sensitive renderer fields', async () => {
+test('hide-sensitive-data lives in Settings and masks only the RPC URL', async () => {
   const [html, renderer, styles] = await Promise.all([
     readFile(new URL('../../ui/index.html', import.meta.url), 'utf8'),
     readFile(new URL('../../ui/app.js', import.meta.url), 'utf8'),
     readFile(new URL('../../ui/styles.css', import.meta.url), 'utf8'),
   ]);
-  assert.match(html, /id="hide-sensitive-data"[^>]*checked/);
+  assert.match(html, /id="settings-overlay"[\s\S]*id="hide-sensitive-data"[^>]*checked/);
   assert.match(html, /id="settings-hot-wallet-secret"[^>]*type="password"/);
+  assert.match(html, /id="settings-profile"[^>]*type="text"/);
   assert.match(html, /id="remove-hot-wallet"/);
-  assert.match(renderer, /sensitiveHidden:true/);
-  assert.match(renderer, /\[data-field=contractAddress\],\[data-field=comment\]/);
-  assert.match(renderer, /sensitive\?masked\(String\(value\)\)/);
-  assert.match(renderer, /settings-profile.*type=.*password/);
+  assert.match(renderer, /rpcUrlHidden:true/);
   assert.match(renderer, /settings-rpc.*type=.*password/);
-  assert.match(styles, /sensitive-mask/);
+  assert.doesNotMatch(renderer, /\[data-field=contractAddress\],\[data-field=comment\]/);
+  assert.doesNotMatch(renderer, /settings-profile.*type=.*password/);
+  assert.doesNotMatch(renderer, /hot-wallet-address.*masked/);
+  assert.doesNotMatch(styles, /sensitive-mask/);
 });
 
 test('hot-wallet secret is write-only and signing remains disabled', async () => {

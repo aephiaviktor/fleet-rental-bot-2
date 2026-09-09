@@ -9,6 +9,9 @@ export interface AppSettings {
   useRpcLimiter: boolean;
   rpcUrl: string;
   refreshIntervalSeconds: number;
+  useHeliusSender: boolean;
+  transactionPriorityFeeMicroLamports: number;
+  heliusSenderTipSol: number;
   /** Retained only to migrate early 0.1.x settings; no longer shown in the UI. */
   walletAddress: string;
   /** Retained only to keep unsigned review compatibility during migration. */
@@ -22,6 +25,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   useRpcLimiter: true,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
   refreshIntervalSeconds: 60,
+  useHeliusSender: false,
+  transactionPriorityFeeMicroLamports: 1_000,
+  heliusSenderTipSol: 0.0002,
   walletAddress: '',
   challengerProfileAddress: '',
 };
@@ -45,6 +51,19 @@ export function validateSettings(value: unknown): AppSettings {
   if (!Number.isInteger(refreshIntervalSeconds) || refreshIntervalSeconds! < 15 || refreshIntervalSeconds! > 3600) {
     throw new Error('Refresh interval must be between 15 and 3600 seconds');
   }
+  const transactionPriorityFeeMicroLamports = candidate.transactionPriorityFeeMicroLamports ?? 1_000;
+  if (!Number.isInteger(transactionPriorityFeeMicroLamports) || transactionPriorityFeeMicroLamports < 1) {
+    throw new Error('Transaction priority fee must be a positive integer');
+  }
+  const heliusSenderTipSol = candidate.heliusSenderTipSol ?? 0.0002;
+  if (!Number.isFinite(heliusSenderTipSol) || heliusSenderTipSol < 0) {
+    throw new Error('Helius Sender tip must be a non-negative number');
+  }
+  const useHeliusSender = candidate.useHeliusSender ?? false;
+  if (typeof useHeliusSender !== 'boolean') throw new Error('Use Helius Sender must be a boolean');
+  if (useHeliusSender && heliusSenderTipSol < 0.0002) {
+    throw new Error('Helius Sender tip must be at least 0.0002 SOL when enabled');
+  }
   const normalizedProfile = playerProfile.trim() === '' ? '' : requireSolanaAddress(playerProfile, 'playerProfile');
   return {
     version: 1,
@@ -53,6 +72,9 @@ export function validateSettings(value: unknown): AppSettings {
     useRpcLimiter: candidate.useRpcLimiter ?? true,
     rpcUrl: candidate.rpcUrl,
     refreshIntervalSeconds: refreshIntervalSeconds!,
+    useHeliusSender,
+    transactionPriorityFeeMicroLamports,
+    heliusSenderTipSol,
     walletAddress: walletAddress.trim() === '' ? '' : requireSolanaAddress(walletAddress, 'walletAddress'),
     challengerProfileAddress: normalizedProfile,
   };

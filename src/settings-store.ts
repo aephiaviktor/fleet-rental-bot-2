@@ -5,7 +5,7 @@ import { requireSolanaAddress } from './solana-address.js';
 export interface AppSettings {
   version: 1;
   aephiaApiKey: string;
-  usturPlayerProfile: string;
+  playerProfile: string;
   useRpcLimiter: boolean;
   rpcUrl: string;
   refreshIntervalSeconds: number;
@@ -18,7 +18,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
   aephiaApiKey: '',
-  usturPlayerProfile: '',
+  playerProfile: '',
   useRpcLimiter: true,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
   refreshIntervalSeconds: 60,
@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export function validateSettings(value: unknown): AppSettings {
   if (typeof value !== 'object' || value === null) throw new Error('Settings must be an object');
-  const candidate = value as Partial<AppSettings>;
+  const candidate = value as Partial<AppSettings> & { usturPlayerProfile?: unknown };
   if (candidate.version !== 1) throw new Error('Unsupported settings version');
   if (typeof candidate.rpcUrl !== 'string') throw new Error('RPC URL is required');
   let url: URL;
@@ -36,20 +36,20 @@ export function validateSettings(value: unknown): AppSettings {
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('RPC URL must use HTTP or HTTPS');
   const aephiaApiKey = candidate.aephiaApiKey ?? '';
   if (typeof aephiaApiKey !== 'string') throw new Error('Aephia API key must be a string');
-  const legacyProfile = candidate.challengerProfileAddress ?? '';
-  const usturPlayerProfile = candidate.usturPlayerProfile ?? legacyProfile;
-  if (typeof usturPlayerProfile !== 'string') throw new Error('USTUR player profile must be a string');
+  const legacyProfile = candidate.usturPlayerProfile ?? candidate.challengerProfileAddress ?? '';
+  const playerProfile = candidate.playerProfile ?? legacyProfile;
+  if (typeof playerProfile !== 'string') throw new Error('Player Profile must be a string');
   const walletAddress = candidate.walletAddress ?? '';
   if (typeof walletAddress !== 'string') throw new Error('Wallet address must be a string');
   const refreshIntervalSeconds = candidate.refreshIntervalSeconds;
   if (!Number.isInteger(refreshIntervalSeconds) || refreshIntervalSeconds! < 15 || refreshIntervalSeconds! > 3600) {
     throw new Error('Refresh interval must be between 15 and 3600 seconds');
   }
-  const normalizedProfile = usturPlayerProfile.trim() === '' ? '' : requireSolanaAddress(usturPlayerProfile, 'usturPlayerProfile');
+  const normalizedProfile = playerProfile.trim() === '' ? '' : requireSolanaAddress(playerProfile, 'playerProfile');
   return {
     version: 1,
     aephiaApiKey: aephiaApiKey.trim(),
-    usturPlayerProfile: normalizedProfile,
+    playerProfile: normalizedProfile,
     useRpcLimiter: candidate.useRpcLimiter ?? true,
     rpcUrl: candidate.rpcUrl,
     refreshIntervalSeconds: refreshIntervalSeconds!,

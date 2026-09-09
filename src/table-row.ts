@@ -2,7 +2,6 @@ import {
   estimateDefenderBonusAtlas,
   estimatePoints,
   holdingFraction,
-  recommendAction,
 } from './metrics.js';
 import type { FleetContractSnapshot, FleetTableRow, FleetWatchEntry, WalletPosition } from './model.js';
 
@@ -45,9 +44,6 @@ export function buildFleetTableRow(
     snapshot,
     position,
     rentalCostAtlas,
-    netOperatingValueAtlas: entry.estimatedOperatingValueAtlas == null
-      ? null
-      : entry.estimatedOperatingValueAtlas - rentalCostAtlas,
     reservationPremiumPerDayAtlas,
     allInCostPerDayAtlas: reservationPremiumPerDayAtlas == null
       ? null
@@ -63,6 +59,5 @@ export function buildFleetTableRow(
     maximumRemainingLockMs,
     estimatedPoints,
     pointsPerThousandAtlas: rentalCostAtlas > 0 ? snapshot.effectivePointsPerDay / rentalCostAtlas * 1_000 : null,
-    recommendation: recommendAction(entry, snapshot, position),
   };
 }

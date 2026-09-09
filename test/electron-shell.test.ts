@@ -10,6 +10,10 @@ test('Electron shell keeps renderer sandboxed and transaction mode read-only', a
   assert.match(main, /readOnly:\s*true/);
   assert.match(main, /safeStorage\.encryptString/);
   assert.match(main, /safeStorage\.decryptString/);
+  assert.match(main, /configureInstance/);
+  assert.match(main, /requestSingleInstanceLock/);
+  assert.match(main, /INSTANCE\.title/);
+  assert.match(main, /icon:\s*INSTANCE\.icon/);
 });
 
 test('renderer uses a restrictive content security policy', async () => {
@@ -32,13 +36,18 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.doesNotMatch(html, /id="refresh-button"/);
   assert.match(html, /class="settings-drawer"/);
   assert.match(html, /Aephia API key/);
-  assert.match(html, /USTUR player profile/);
+  assert.match(html, />Player Profile</);
+  assert.doesNotMatch(html, /USTUR player profile/);
+  assert.match(html, /id="profile-faction"/);
+  assert.match(renderer, /getPlayerFaction/);
+  assert.match(renderer, /Checking…/);
+  assert.match(renderer, /Unknown/);
   assert.match(renderer, /nav-collapsed/);
   assert.match(renderer, /Status unavailable/);
   assert.doesNotMatch(renderer, /summary-locked|summary-defenses|summary-enabled|summary-refreshed/);
   assert.match(renderer, /Stored securely — enter a new value to replace/);
   assert.doesNotMatch(html, /Refresh interval seconds/);
-  assert.match(renderer, /Operating value \/ day/);
+  assert.match(renderer, /Estimated net value \/ day/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
   assert.doesNotMatch(html, /class="settings-rail"/);
@@ -55,4 +64,6 @@ test('watchlist writes are exposed only through the validated IPC boundary', asy
   assert.match(preload, /reservation:review/);
   assert.match(main, /simulateReservation\(entry, settings\)/);
   assert.match(preload, /reservation:simulate/);
+  assert.match(preload, /getPlayerFaction/);
+  assert.match(main, /profile:faction/);
 });

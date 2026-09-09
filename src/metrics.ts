@@ -1,5 +1,3 @@
-import type { FleetContractSnapshot, FleetWatchEntry, Recommendation, WalletPosition } from './model.js';
-
 const SECONDS_PER_DAY = 86_400;
 
 export function estimateRentalCostAtlas(rateAtlasPerDay: number, durationSeconds: number): number {
@@ -25,19 +23,4 @@ export function estimateDefenderBonusAtlas(
 export function estimatePoints(pointsPerDay: number, fleetWeight: number, durationSeconds: number): number {
   if (pointsPerDay < 0 || fleetWeight < 0 || durationSeconds < 0) throw new Error('Points inputs must be non-negative');
   return pointsPerDay * fleetWeight * durationSeconds / SECONDS_PER_DAY;
-}
-
-export function recommendAction(
-  entry: FleetWatchEntry,
-  snapshot: FleetContractSnapshot,
-  position: WalletPosition,
-): Recommendation {
-  if (!entry.canSafelyOperate) return 'cannot-safely-operate';
-  const bid = snapshot.minimumTakeoverBidAtlas ?? 0;
-  const tooExpensive = snapshot.rentalRateAtlasPerDay > entry.maximumRentalRateAtlasPerDay
-    || bid > entry.maximumReservationBidAtlas;
-  if (tooExpensive) return position.status === 'outbid' ? 'stop' : 'too-expensive';
-  if (position.status === 'defending' || position.status === 'activated') return 'hold';
-  if (position.status === 'outbid') return 'rebid';
-  return 'reserve-now';
 }

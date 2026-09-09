@@ -18,24 +18,30 @@ test('settings require HTTP RPC and bounded refresh interval', () => {
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, refreshIntervalSeconds: 5 }), /between 15 and 3600/);
 });
 
-test('USTUR player profile must be empty or a valid Solana address', () => {
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, usturPlayerProfile: 'profile' }), /valid Solana address/);
-  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, usturPlayerProfile: profile }).challengerProfileAddress, profile);
+test('player profile must be empty or a valid Solana address', () => {
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, playerProfile: 'profile' }), /valid Solana address/);
+  const settings = validateSettings({ ...DEFAULT_SETTINGS, playerProfile: profile });
+  assert.equal(settings.playerProfile, profile);
+  assert.equal(settings.challengerProfileAddress, profile);
 });
 
-test('early version-one settings migrate the legacy SAGE profile into USTUR', () => {
-  const legacy = { ...DEFAULT_SETTINGS, challengerProfileAddress: profile } as Partial<typeof DEFAULT_SETTINGS>;
-  delete legacy.usturPlayerProfile;
-  assert.equal(validateSettings(legacy).usturPlayerProfile, profile);
+test('version-one settings migrate faction-specific and early profile fields', () => {
+  const factionSpecific = { ...DEFAULT_SETTINGS, playerProfile: undefined, usturPlayerProfile: profile };
+  assert.equal(validateSettings(factionSpecific).playerProfile, profile);
+
+  const early = { ...DEFAULT_SETTINGS, playerProfile: undefined, challengerProfileAddress: profile };
+  assert.equal(validateSettings(early).playerProfile, profile);
 });
 
-test('settings persist API and limiter controls atomically', async () => {
+test('settings persist neutral player profile and omit the obsolete faction-specific field', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   const file = join(root, 'settings.json');
-  await saveSettings(file, { ...DEFAULT_SETTINGS, aephiaApiKey: 'api-key', usturPlayerProfile: profile, useRpcLimiter: false });
+  await saveSettings(file, { ...DEFAULT_SETTINGS, aephiaApiKey: 'api-key', playerProfile: profile, useRpcLimiter: false });
   const loaded = await loadSettings(file);
+  const persisted = await readFile(file, 'utf8');
   assert.equal(loaded.aephiaApiKey, 'api-key');
-  assert.equal(loaded.usturPlayerProfile, profile);
+  assert.equal(loaded.playerProfile, profile);
   assert.equal(loaded.useRpcLimiter, false);
-  assert.match(await readFile(file, 'utf8'), /"version": 1/);
+  assert.match(persisted, /"playerProfile":/);
+  assert.doesNotMatch(persisted, /usturPlayerProfile/);
 });

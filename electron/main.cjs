@@ -1,7 +1,10 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
+const { configureInstance } = require('./instance.cjs');
 
+const INSTANCE = configureInstance(app, process.argv);
+const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE.instance });
 let mainWindow = null;
 
 async function domainModule(name) {
@@ -65,7 +68,8 @@ function createWindow() {
     minWidth: 980,
     minHeight: 640,
     backgroundColor: '#07111a',
-    title: 'Fleet Rental Bot 2',
+    title: INSTANCE.title,
+    icon: INSTANCE.icon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -82,6 +86,7 @@ ipcMain.handle('app:get-bootstrap', async () => ({
   version: app.getVersion(),
   dataDirectory: app.getPath('userData'),
   readOnly: true,
+  instance: INSTANCE.instance,
 }));
 
 ipcMain.handle('watchlist:load', async () => {
@@ -110,6 +115,16 @@ ipcMain.handle('settings:save', async (_event, settings) => {
   if (replacementKey) await writeSecureApiKey(replacementKey);
   await saveSettings(settingsPath(), { ...current, ...settings, aephiaApiKey: '' });
   return { ok: true, secureSettingsStatus: { aephiaApiKey: Boolean(replacementKey || current.aephiaApiKey) } };
+});
+
+ipcMain.handle('profile:faction', async () => {
+  const settings = await loadSettingsWithSecrets();
+  if (!settings.playerProfile) return { faction: null, profileFactionAddress: null };
+  const [{ resolveRpcUrl }, { resolvePlayerFaction }] = await Promise.all([
+    domainModule('rpc-limiter'), domainModule('profile-faction'),
+  ]);
+  const rpcUrl = await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl);
+  return resolvePlayerFaction(settings.playerProfile, rpcUrl);
 });
 
 ipcMain.handle('rpc-limiter:status', async () => {
@@ -153,13 +168,22 @@ ipcMain.handle('reservation:simulate', async (_event, entryId) => {
   return simulateReservation(entry, settings);
 });
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
-});
+  app.whenReady().then(() => {
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+}

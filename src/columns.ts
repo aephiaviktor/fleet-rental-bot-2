@@ -5,8 +5,6 @@ export type ColumnId =
   | 'rentalRate'
   | 'requestedDuration'
   | 'rentalCost'
-  | 'operatingValue'
-  | 'netValue'
   | 'maximumRentalRate'
   | 'maximumReservationBid'
   | 'reservationCurrency'
@@ -28,7 +26,8 @@ export type ColumnId =
   | 'pointsPerThousandAtlas'
   | 'existingPointsBalance'
   | 'positionStatus'
-  | 'recommendation';
+  | 'canSafelyOperate'
+  | 'comment';
 
 export interface ColumnDefinition {
   id: ColumnId;
@@ -42,8 +41,6 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'rentalRate', label: 'Rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'requestedDuration', label: 'Requested duration (days)', group: 'economics', defaultVisible: true },
   { id: 'rentalCost', label: 'Estimated rental cost / day (ATLAS)', group: 'economics', defaultVisible: true },
-  { id: 'operatingValue', label: 'Estimated operating value / day (ATLAS)', group: 'economics', defaultVisible: true },
-  { id: 'netValue', label: 'Estimated net value / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'maximumRentalRate', label: 'Maximum rental rate / day (ATLAS)', group: 'economics', defaultVisible: false },
   { id: 'maximumReservationBid', label: 'Maximum reservation bid (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'reservationCurrency', label: 'Reservation currency', group: 'reservation', defaultVisible: false },
@@ -65,7 +62,8 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'pointsPerThousandAtlas', label: 'Points per 1,000 ATLAS', group: 'loyalty', defaultVisible: false },
   { id: 'existingPointsBalance', label: 'Existing Points balance', group: 'loyalty', defaultVisible: false },
   { id: 'positionStatus', label: 'Position status', group: 'decision', defaultVisible: true },
-  { id: 'recommendation', label: 'Recommended action', group: 'decision', defaultVisible: true },
+  { id: 'canSafelyOperate', label: 'Safe to operate', group: 'decision', defaultVisible: true },
+  { id: 'comment', label: 'Note', group: 'decision', defaultVisible: true },
 ] as const;
 
 export const DEFAULT_VISIBLE_COLUMNS: readonly ColumnId[] = COLUMN_DEFINITIONS

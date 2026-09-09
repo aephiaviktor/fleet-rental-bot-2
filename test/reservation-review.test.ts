@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from '../src/settings-store.js';
 
 const entry: FleetWatchEntry = {
   id: 'fleet', label: 'Fleet', contractAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7',
-  requestedDurationSeconds: 86_400, estimatedOperatingValueAtlas: 200,
+  requestedDurationSeconds: 86_400, estimatedNetValueAtlas: 200,
   maximumRentalRateAtlasPerDay: 100, maximumReservationBidAtlas: 120,
   canSafelyOperate: true, enabled: true, comment: '',
 };

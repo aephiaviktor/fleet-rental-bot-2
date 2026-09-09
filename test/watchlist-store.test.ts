@@ -8,7 +8,7 @@ import { loadWatchlist, parseWatchlist, saveWatchlist, type WatchlistDocument } 
 
 const entry = {
   id: 'fleet-1', label: 'Fleet One', contractAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7', requestedDurationSeconds: 3600,
-  estimatedOperatingValueAtlas: 50, maximumRentalRateAtlasPerDay: 100,
+  estimatedNetValueAtlas: 50, maximumRentalRateAtlasPerDay: 100,
   maximumReservationBidAtlas: 20, canSafelyOperate: true, enabled: true, comment: 'Attractive',
 };
 
@@ -35,15 +35,29 @@ test('rejects malformed Solana contract addresses before persistence', () => {
   );
 });
 
+test('does not silently relabel legacy gross operating values as net values', () => {
+  const legacy = { ...entry, estimatedNetValueAtlas: undefined, estimatedOperatingValueAtlas: 150 };
+  const document = parseWatchlist(JSON.stringify({ version: 1, entries: [legacy] }));
+  assert.equal(document.entries[0].estimatedNetValueAtlas, null);
+  assert.equal('estimatedOperatingValueAtlas' in document.entries[0], false);
+});
+
+test('safe-to-operate and note are selectable by default while net and recommendation columns are gone', () => {
+  assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('canSafelyOperate'), true);
+  assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('comment'), true);
+  assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('netValue' as never), false);
+  assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('recommendation' as never), false);
+});
+
 test('normalizes selectable columns and ignores unknown values', () => {
   const document = parseWatchlist(JSON.stringify({ version: 1, entries: [entry], visibleColumns: ['label', 'unknown', 'label'] }));
-  assert.deepEqual(document.visibleColumns, ['label']);
+  assert.deepEqual(document.visibleColumns, ['label', 'canSafelyOperate', 'comment']);
 });
 
 test('saves atomically and round-trips a validated document', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fleet-rental-bot-2-'));
   const filePath = path.join(directory, 'watchlist.json');
-  const document: WatchlistDocument = { version: 1, entries: [entry], visibleColumns: ['label', 'recommendation'] };
+  const document: WatchlistDocument = { version: 2, entries: [entry], visibleColumns: ['label', 'comment'] };
   await saveWatchlist(filePath, document);
   assert.deepEqual(await loadWatchlist(filePath), document);
   assert.match(await readFile(filePath, 'utf8'), /Fleet One/);

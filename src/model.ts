@@ -4,20 +4,12 @@ export const POINTS_DECIMALS = 8;
 
 export type ReservationCurrency = 'ATLAS' | 'POINTS';
 export type PositionStatus = 'none' | 'defending' | 'outbid' | 'activated';
-export type Recommendation =
-  | 'reserve-now'
-  | 'hold'
-  | 'rebid'
-  | 'stop'
-  | 'too-expensive'
-  | 'cannot-safely-operate';
-
 export interface FleetWatchEntry {
   id: string;
   label: string;
   contractAddress: string;
   requestedDurationSeconds: number;
-  estimatedOperatingValueAtlas: number | null;
+  estimatedNetValueAtlas: number | null;
   maximumRentalRateAtlasPerDay: number;
   maximumReservationBidAtlas: number;
   canSafelyOperate: boolean;
@@ -51,7 +43,6 @@ export interface FleetTableRow {
   snapshot: FleetContractSnapshot;
   position: WalletPosition;
   rentalCostAtlas: number;
-  netOperatingValueAtlas: number | null;
   reservationPremiumPerDayAtlas: number | null;
   allInCostPerDayAtlas: number | null;
   defenderPrincipalRefundAtlas: number | null;
@@ -63,7 +54,6 @@ export interface FleetTableRow {
   maximumRemainingLockMs: number | null;
   estimatedPoints: number;
   pointsPerThousandAtlas: number | null;
-  recommendation: Recommendation;
 }
 
 export interface WalletPosition {

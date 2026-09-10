@@ -1,17 +1,151 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
+const os = require('node:os');
+const { pathToFileURL } = require('node:url');
+const { spawn } = require('node:child_process');
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const { configureInstance } = require('./instance.cjs');
 const { getHotWalletAddressFromSecret } = require('./wallet-secret.cjs');
+const { buildWindowsPortableUpdateScript, compareVersions, parseLatestRelease } = require('./update-policy.cjs');
 
 const INSTANCE = configureInstance(app, process.argv);
 const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE.instance });
 let mainWindow = null;
 const lcfsTimers = new Map();
 let lcfsStateWrite = Promise.resolve();
+const LATEST_RELEASE_URL = 'https://api.github.com/repos/aephiaviktor/fleet-rental-bot-2/releases/latest';
 
 async function domainModule(name) {
   return import(`../dist/src/${name}.js`);
+}
+
+function emitUpdateProgress(phase, message) {
+  if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('update:progress', { phase, message });
+}
+
+async function getLatestRelease() {
+  const response = await fetch(`${LATEST_RELEASE_URL}?t=${Date.now()}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Cache-Control': 'no-cache',
+      'User-Agent': 'fleet-rental-bot-2-updater',
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`GitHub Releases request failed: HTTP ${response.status}`);
+  return parseLatestRelease(await response.json());
+}
+
+async function checkForUpdates() {
+  const currentVersion = app.getVersion();
+  const latest = await getLatestRelease();
+  return {
+    currentVersion,
+    latestVersion: latest.version,
+    updateAvailable: compareVersions(latest.version, currentVersion) > 0,
+    releaseUrl: latest.releaseUrl,
+    installSupported: app.isPackaged && process.platform === 'win32' && Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
+  };
+}
+
+function commandLineValue(name) {
+  const prefix = `${name}=`;
+  const direct = process.argv.find((value) => String(value).startsWith(prefix));
+  if (direct) return String(direct).slice(prefix.length);
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? String(process.argv[index + 1] || '') : '';
+}
+
+async function confirmUpdateReadiness() {
+  const readyValue = commandLineValue('--update-ready-file');
+  const token = commandLineValue('--update-token');
+  if (!readyValue || !/^[a-f0-9-]{36}$/i.test(token)) return;
+  const readyPath = path.resolve(readyValue);
+  const tempRoot = path.resolve(app.getPath('temp'));
+  const relative = path.relative(tempRoot, readyPath);
+  const parentName = path.basename(path.dirname(readyPath));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)
+      || path.basename(readyPath) !== 'ready.json' || !parentName.startsWith('fleet-rental-bot-2-update-')) return;
+  await fs.writeFile(readyPath, JSON.stringify({ token, version: app.getVersion(), instance: INSTANCE.instance }), { mode: 0o600 });
+}
+
+function requireTrustedUpdaterRenderer(event) {
+  const expectedUrl = pathToFileURL(path.join(__dirname, '..', 'ui', 'index.html')).href;
+  if (!mainWindow || event.senderFrame !== mainWindow.webContents.mainFrame || event.senderFrame?.url !== expectedUrl) {
+    throw new Error('Untrusted updater request rejected.');
+  }
+}
+
+async function downloadUpdateAndRestart() {
+  if (!app.isPackaged || process.platform !== 'win32' || !process.env.PORTABLE_EXECUTABLE_FILE) {
+    throw new Error('In-app installation is available only in the packaged Windows portable application.');
+  }
+  const currentVersion = app.getVersion();
+  const latest = await getLatestRelease();
+  if (compareVersions(latest.version, currentVersion) <= 0) {
+    return { updated: false, currentVersion, latestVersion: latest.version };
+  }
+
+  const targetPath = path.resolve(process.env.PORTABLE_EXECUTABLE_FILE);
+  const targetDirectory = path.dirname(targetPath);
+  const writeProbe = path.join(targetDirectory, `.fleet-rental-bot-2-update-${process.pid}.tmp`);
+  await fs.writeFile(writeProbe, '').then(() => fs.unlink(writeProbe)).catch(() => {
+    throw new Error('The application folder is not writable; move the portable executable to a writable folder and try again.');
+  });
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-rental-bot-2-update-'));
+  const stagedPath = path.join(tempDir, latest.asset.name);
+  const readyPath = path.join(tempDir, 'ready.json');
+  const backupPath = `${targetPath}.update-backup`;
+  const token = crypto.randomUUID();
+  try {
+    emitUpdateProgress('downloading', `Downloading Fleet Rental Bot 2 v${latest.version}…`);
+    const response = await fetch(latest.asset.downloadUrl, {
+      headers: { 'User-Agent': 'fleet-rental-bot-2-updater' },
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!response.ok) throw new Error(`Update download failed: HTTP ${response.status}`);
+    const declaredSize = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredSize) && declaredSize > 0 && declaredSize !== latest.asset.size) {
+      throw new Error('Update download size does not match the official release metadata.');
+    }
+    const contents = Buffer.from(await response.arrayBuffer());
+    if (contents.length !== latest.asset.size) throw new Error('Downloaded update size does not match the official release asset.');
+    if (contents[0] !== 0x4d || contents[1] !== 0x5a) throw new Error('Downloaded update is not a Windows executable.');
+    const digest = crypto.createHash('sha256').update(contents).digest('hex');
+    if (digest !== latest.asset.sha256) throw new Error('Downloaded update failed SHA-256 verification.');
+    await fs.writeFile(stagedPath, contents, { mode: 0o700 });
+
+    emitUpdateProgress('staging', 'Update verified. Preparing a safe restart…');
+    const scriptPath = path.join(tempDir, 'install-update.ps1');
+    await fs.writeFile(scriptPath, buildWindowsPortableUpdateScript({
+      parentPid: process.pid,
+      targetPath,
+      stagedPath,
+      backupPath,
+      readyPath,
+      token,
+      instance: INSTANCE.instance,
+    }), 'utf8');
+    const helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+      cwd: tempDir,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    await new Promise((resolve, reject) => {
+      helper.once('spawn', resolve);
+      helper.once('error', reject);
+    });
+    helper.unref();
+    emitUpdateProgress('restarting', `Fleet Rental Bot 2 v${latest.version} verified. Restarting…`);
+    setTimeout(() => app.quit(), 250);
+    return { updated: true, currentVersion, latestVersion: latest.version, staged: true };
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function watchlistPath() {
@@ -210,6 +344,7 @@ function createWindow() {
   });
   mainWindow.removeMenu();
   void mainWindow.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
+  mainWindow.webContents.once('did-finish-load', () => { void confirmUpdateReadiness(); });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -321,6 +456,16 @@ ipcMain.handle('refresh:next-delay', async (_event, endTimes) => {
     ? endTimes.map((value) => value === null || Number.isFinite(value) ? value : null)
     : [];
   return nextRefreshDelayMs(values);
+});
+
+ipcMain.handle('updates:check', async (event) => {
+  requireTrustedUpdaterRenderer(event);
+  return checkForUpdates();
+});
+
+ipcMain.handle('updates:download-and-restart', async (event) => {
+  requireTrustedUpdaterRenderer(event);
+  return downloadUpdateAndRestart();
 });
 
 ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {

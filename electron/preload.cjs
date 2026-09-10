@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   loadCachedWatchlist: () => ipcRenderer.invoke('watchlist:cached'),
   refreshWatchlist: (entryIds) => ipcRenderer.invoke('watchlist:refresh', entryIds),
   getNextRefreshDelay: (endTimes) => ipcRenderer.invoke('refresh:next-delay', endTimes),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdateAndRestart: () => ipcRenderer.invoke('updates:download-and-restart'),
+  onUpdateProgress: (listener) => {
+    const wrapped = (_event, progress) => listener(progress);
+    ipcRenderer.on('update:progress', wrapped);
+    return () => ipcRenderer.removeListener('update:progress', wrapped);
+  },
   prepareReservationReview: (entryId) => ipcRenderer.invoke('reservation:review', entryId),
   simulateReservation: (entryId) => ipcRenderer.invoke('reservation:simulate', entryId),
   onLcfsStatus: (listener) => ipcRenderer.on('lcfs:status', (_event, status) => listener(status)),

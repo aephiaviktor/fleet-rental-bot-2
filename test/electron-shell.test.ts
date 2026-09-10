@@ -64,6 +64,34 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.doesNotMatch(html, /class="settings-rail"/);
 });
 
+test('update control mirrors the established upper-right modal workflow', async () => {
+  const [html, styles, renderer, preload, main] = await Promise.all([
+    readFile('ui/index.html', 'utf8'),
+    readFile('ui/styles.css', 'utf8'),
+    readFile('ui/app.js', 'utf8'),
+    readFile('electron/preload.cjs', 'utf8'),
+    readFile('electron/main.cjs', 'utf8'),
+  ]);
+  assert.match(html, /class="panel-toolbar"[\s\S]*id="update-btn"/);
+  assert.match(html, /id="update-modal"/);
+  assert.match(html, /id="update-current-version"/);
+  assert.match(html, /id="update-latest-version"/);
+  assert.match(html, /id="update-confirm-btn"/);
+  assert.match(styles, /\.update-btn\.update-available/);
+  assert.match(renderer, /void checkForUpdates\(\)/);
+  assert.match(renderer, /classList\.toggle\('update-available'/);
+  assert.match(renderer, /downloadUpdateAndRestart/);
+  assert.match(preload, /updates:check/);
+  assert.match(preload, /updates:download-and-restart/);
+  assert.match(preload, /update:progress/);
+  assert.match(main, /releases\/latest/);
+  assert.match(main, /PORTABLE_EXECUTABLE_FILE/);
+  assert.match(main, /createHash\('sha256'\)/);
+  assert.match(main, /confirmUpdateReadiness/);
+  assert.match(main, /requireTrustedUpdaterRenderer/);
+  assert.match(main, /senderFrame !== mainWindow\.webContents\.mainFrame/);
+});
+
 test('watchlist writes are exposed only through the validated IPC boundary', async () => {
   const preload = await readFile('electron/preload.cjs', 'utf8');
   const main = await readFile('electron/main.cjs', 'utf8');

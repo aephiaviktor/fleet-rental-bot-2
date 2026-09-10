@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { AccountRole, address, createNoopSigner, type Instruction } from '@solana/kit';
 import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from '../src/model.js';
-import { evaluateLcfsEligibility, executeLcfsAttempt, lcfsAttemptKey } from '../src/lcfs.js';
+import {
+  evaluateLcfsEligibility,
+  executeLcfsAttempt,
+  lcfsAttemptKey,
+  lcfsSchedule,
+  normalizeInstructionSigners,
+  planLcfsReservation,
+} from '../src/lcfs.js';
 import { DEFAULT_SETTINGS, validateSettings } from '../src/settings-store.js';
 import { parseWatchlist } from '../src/watchlist-store.js';
 
@@ -22,13 +30,37 @@ const snapshot: FleetContractSnapshot = {
 };
 const position: WalletPosition = { status: 'none', atlasLocked: 0, reservedAtMs: null };
 
-test('LCFS settings default to three seconds and require a non-negative integer', () => {
-  assert.equal(DEFAULT_SETTINGS.lcfsLeadTimeSeconds, 3);
+test('LCFS settings default to five seconds and migrate shorter legacy lead times', () => {
+  assert.equal(DEFAULT_SETTINGS.lcfsLeadTimeSeconds, 5);
   const legacy = { ...DEFAULT_SETTINGS } as Partial<typeof DEFAULT_SETTINGS>;
   delete legacy.lcfsLeadTimeSeconds;
-  assert.equal(validateSettings(legacy).lcfsLeadTimeSeconds, 3);
+  assert.equal(validateSettings(legacy).lcfsLeadTimeSeconds, 5);
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, lcfsLeadTimeSeconds: 3 }).lcfsLeadTimeSeconds, 5);
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, lcfsLeadTimeSeconds: -1 }), /LCFS/);
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, lcfsLeadTimeSeconds: 1.5 }), /LCFS/);
+});
+
+test('LCFS schedules preparation, refresh, final check, and send with measured safety margins', () => {
+  assert.deepEqual(lcfsSchedule(100_000, 5), {
+    prepareAtMs: 70_000,
+    refreshAtMs: 90_000,
+    finalCheckAtMs: 93_000,
+    sendAtMs: 95_000,
+  });
+});
+
+test('LCFS bids 125%, caps at Max bid, and blocks when even 110% exceeds Max bid', () => {
+  const normal = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 10, minimumTakeoverBidAtlas: 10.001 }, position, 5_000);
+  assert.equal(normal.kind, 'ready');
+  if (normal.kind === 'ready') assert.equal(normal.bidAtlas, 12.5);
+
+  const capped = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 17, minimumTakeoverBidAtlas: 17.001 }, position, 5_000);
+  assert.equal(capped.kind, 'ready');
+  if (capped.kind === 'ready') assert.equal(capped.bidAtlas, 20);
+
+  const blocked = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 19, minimumTakeoverBidAtlas: 19.001 }, position, 5_000);
+  assert.equal(blocked.kind, 'blocked');
+  if (blocked.kind === 'blocked') assert.match(blocked.detail, /110%/);
 });
 
 test('legacy watch rows default LCFS off and explicit values round-trip', () => {
@@ -60,15 +92,41 @@ test('LCFS attempt keys deduplicate an entry and rental end while allowing the n
   assert.notEqual(lcfsAttemptKey('fleet-1', 10_000), lcfsAttemptKey('fleet-1', 20_000));
 });
 
-test('LCFS re-fetches at send time and submits the current next bid exactly once', async () => {
-  let submittedBid: number | null = null;
-  const result = await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', 7_000, {
-    fetchBundle: async () => ({ raw: {} as never, mapped: snapshot }),
-    build: async ({ plan }) => { submittedBid = plan.kind === 'ready' ? plan.bidAtlas : null; return []; },
-    submit: async () => 'signature',
-  });
+test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by T-5', async () => {
+  let nowMs = 60_000;
+  const waits: number[] = [];
+  const preparedBids: number[] = [];
+  const sentCandidates: string[] = [];
+  const changed = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'NewDefender', reservationBidAtlas: 12, minimumTakeoverBidAtlas: 12.001 };
+  const snapshots = [
+    { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10, minimumTakeoverBidAtlas: 10.001 },
+    changed,
+    changed,
+  ];
+  const result = await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
+    now: () => nowMs,
+    waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
+    fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+    build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
+    prepareTransaction: async () => `candidate-${preparedBids.length}`,
+    submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+  }, 100_000);
   assert.equal(result.kind, 'submitted');
-  assert.equal(submittedBid, 20);
+  assert.deepEqual(waits, [70_000, 90_000, 93_000, 95_000]);
+  assert.deepEqual(preparedBids, [12.5, 15]);
+  assert.deepEqual(sentCandidates, ['candidate-2']);
+});
+
+test('LCFS replaces SDK no-op signer identities before signing the prepared transaction', () => {
+  const wallet = address('FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7');
+  const sdkSigner = createNoopSigner(wallet);
+  const actualSigner = createNoopSigner(wallet);
+  const instructions: Instruction[] = [{
+    programAddress: address('11111111111111111111111111111111'),
+    accounts: [{ address: wallet, role: AccountRole.WRITABLE_SIGNER, signer: sdkSigner } as never],
+  }];
+  const normalized = normalizeInstructionSigners(instructions, actualSigner);
+  assert.equal((normalized[0].accounts?.[0] as { signer?: unknown }).signer, actualSigner);
 });
 
 test('LCFS blocks when the re-fetched rental end no longer matches the scheduled attempt', async () => {
@@ -77,8 +135,15 @@ test('LCFS blocks when the re-fetched rental end no longer matches the scheduled
     entry,
     { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
     'stored-secret',
-    5_000,
-    { fetchBundle: async () => ({ raw: {} as never, mapped: { ...snapshot, activeRentalEndsAtMs: 9_000 } }), build: async () => [], submit: async () => { submits += 1; return 'signature'; } },
+    undefined,
+    {
+      now: () => 5_000,
+      waitUntil: async () => {},
+      fetchBundle: async () => ({ raw: {} as never, mapped: { ...snapshot, activeRentalEndsAtMs: 9_000 } }),
+      build: async () => [],
+      prepareTransaction: async () => 'candidate',
+      submitPrepared: async () => { submits += 1; return 'signature'; },
+    },
     10_000,
   );
   assert.equal(result.kind, 'blocked');
@@ -87,13 +152,13 @@ test('LCFS blocks when the re-fetched rental end no longer matches the scheduled
 
 test('LCFS sends nothing when Sender is disabled or the re-fetched next bid exceeds Max bid', async () => {
   let submits = 0;
-  const submit = async () => { submits += 1; return 'signature'; };
+  const submitPrepared = async () => { submits += 1; return 'signature'; };
   assert.equal((await executeLcfsAttempt(entry, DEFAULT_SETTINGS, 'stored-secret', 5_000, {
-    fetchBundle: async () => ({ raw: {} as never, mapped: snapshot }), build: async () => [], submit,
+    fetchBundle: async () => ({ raw: {} as never, mapped: snapshot }), build: async () => [], submitPrepared,
   })).kind, 'blocked');
   assert.equal((await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true }, 'stored-secret', 5_000, {
     fetchBundle: async () => ({ raw: {} as never, mapped: { ...snapshot, minimumTakeoverBidAtlas: 21 } }),
-    build: async () => [], submit,
+    build: async () => [], submitPrepared,
   })).kind, 'blocked');
   assert.equal(submits, 0);
 });
@@ -116,10 +181,16 @@ test('every displayed data column is selectable and LCFS and Ending In default v
 });
 
 test('Settings exposes LCFS lead time under the Helius section', async () => {
-  const [html, renderer] = await Promise.all([
+  const [html, renderer, main, lcfs] = await Promise.all([
     readFile(new URL('../../ui/index.html', import.meta.url), 'utf8'),
     readFile(new URL('../../ui/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../../electron/main.cjs', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/lcfs.ts', import.meta.url), 'utf8'),
   ]);
-  assert.match(html, /id="settings-lcfs-lead-time"/);
+  assert.match(html, /id="settings-lcfs-lead-time"[^>]*min="5"/);
+  assert.match(html, /T-30.*T-10.*T-5/);
   assert.match(renderer, /lcfsLeadTimeSeconds/);
+  assert.match(main, /decision\.prepareAtMs/);
+  assert.match(main, /decision\.sendAtMs/);
+  assert.doesNotMatch(lcfs, /simulateTransaction/);
 });

@@ -11,6 +11,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
   type Instruction,
+  type TransactionSigner,
 } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
 import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from './model.js';
@@ -24,23 +25,85 @@ const HELIUS_TIP_ACCOUNT = '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE';
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const PREPARE_MARGIN_SECONDS = 25;
+const REFRESH_MARGIN_SECONDS = 5;
+const FINAL_CHECK_MARGIN_SECONDS = 2;
+
+export interface LcfsSchedule {
+  prepareAtMs: number;
+  refreshAtMs: number;
+  finalCheckAtMs: number;
+  sendAtMs: number;
+}
 
 export type LcfsEligibility =
-  | { kind: 'ready'; executeAtMs: number; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> }
+  | ({ kind: 'ready'; executeAtMs: number; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> } & LcfsSchedule)
   | { kind: 'blocked'; reason: string };
 
 export type LcfsAttemptResult =
   | { kind: 'submitted'; signature: string; attemptKey: string }
   | { kind: 'blocked'; reason: string };
 
+interface PreparedLcfsCandidate {
+  fingerprint: string;
+  wireTransaction: string;
+}
+
 export interface LcfsDependencies {
   fetchBundle?: (contractAddress: string, rpcUrl: string) => Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot }>;
   build?: (input: UnsignedReservationInput) => Promise<unknown>;
-  submit?: (instructions: Instruction[], settings: AppSettings, hotWalletSecret: string) => Promise<string>;
+  prepareTransaction?: (instructions: Instruction[], settings: AppSettings, hotWalletSecret: string) => Promise<string>;
+  submitPrepared?: (wireTransaction: string) => Promise<string>;
+  now?: () => number;
+  waitUntil?: (targetMs: number) => Promise<void>;
 }
 
 export function lcfsAttemptKey(entryId: string, activeRentalEndsAtMs: number): string {
   return `${entryId}:${activeRentalEndsAtMs}`;
+}
+
+export function lcfsSchedule(activeRentalEndsAtMs: number, configuredLeadTimeSeconds: number): LcfsSchedule {
+  const sendLeadSeconds = Math.max(5, configuredLeadTimeSeconds);
+  return {
+    prepareAtMs: activeRentalEndsAtMs - Math.max(30, sendLeadSeconds + PREPARE_MARGIN_SECONDS) * 1_000,
+    refreshAtMs: activeRentalEndsAtMs - Math.max(10, sendLeadSeconds + REFRESH_MARGIN_SECONDS) * 1_000,
+    finalCheckAtMs: activeRentalEndsAtMs - (sendLeadSeconds + FINAL_CHECK_MARGIN_SECONDS) * 1_000,
+    sendAtMs: activeRentalEndsAtMs - sendLeadSeconds * 1_000,
+  };
+}
+
+function roundedAtlas(value: number): number {
+  return Number(value.toFixed(8));
+}
+
+export function planLcfsReservation(
+  entry: FleetWatchEntry,
+  snapshot: FleetContractSnapshot,
+  position: WalletPosition,
+  nowMs = Date.now(),
+): AtlasReservationPlan {
+  const base = planAtlasReservation(entry, snapshot, position, nowMs);
+  if (base.kind === 'blocked' || snapshot.reservationBidAtlas == null) return base;
+
+  const currentBid = snapshot.reservationBidAtlas;
+  const defensiveFloor = roundedAtlas(currentBid * 1.1);
+  if (defensiveFloor > entry.maximumReservationBidAtlas) {
+    return {
+      kind: 'blocked',
+      reason: 'bid-limit',
+      detail: `110% of current ATLAS bid ${currentBid} exceeds maximum ${entry.maximumReservationBidAtlas}`,
+    };
+  }
+
+  const aggressiveBid = roundedAtlas(currentBid * 1.25);
+  const bidAtlas = Math.max(
+    base.bidAtlas,
+    aggressiveBid <= entry.maximumReservationBidAtlas ? aggressiveBid : entry.maximumReservationBidAtlas,
+  );
+  if (bidAtlas > entry.maximumReservationBidAtlas) {
+    return { kind: 'blocked', reason: 'bid-limit', detail: `Required ATLAS bid ${bidAtlas} exceeds maximum ${entry.maximumReservationBidAtlas}` };
+  }
+  return { ...base, bidAtlas: roundedAtlas(bidAtlas) };
 }
 
 export function evaluateLcfsEligibility(
@@ -51,9 +114,81 @@ export function evaluateLcfsEligibility(
   nowMs = Date.now(),
 ): LcfsEligibility {
   if (!entry.lcfs) return { kind: 'blocked', reason: 'LCFS is not enabled for this fleet' };
-  const plan = planAtlasReservation(entry, snapshot, position, nowMs);
+  const plan = planLcfsReservation(entry, snapshot, position, nowMs);
   if (plan.kind === 'blocked') return { kind: 'blocked', reason: plan.detail };
-  return { kind: 'ready', executeAtMs: plan.activeRentalEndsAtMs - leadTimeSeconds * 1_000, plan };
+  const schedule = lcfsSchedule(plan.activeRentalEndsAtMs, leadTimeSeconds);
+  return { kind: 'ready', executeAtMs: schedule.sendAtMs, plan, ...schedule };
+}
+
+function candidateFingerprint(snapshot: FleetContractSnapshot, plan: Extract<AtlasReservationPlan, { kind: 'ready' }>): string {
+  return JSON.stringify([
+    snapshot.activeRentalEndsAtMs,
+    snapshot.reservationsAllowed,
+    snapshot.rentalRateAtlasPerDay,
+    snapshot.reservationDefender,
+    snapshot.reservationBidAtlas,
+    snapshot.minimumTakeoverBidAtlas,
+    plan.action,
+    plan.bidAtlas,
+    plan.requestedDurationSeconds,
+  ]);
+}
+
+function loadBundle(contractAddress: string, rpcUrl: string): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot }> {
+  return loadRawContractSnapshot(contractAddress, rpcUrl).then((raw) => ({ raw, mapped: mapContractSnapshot(raw) }));
+}
+
+async function inspectFreshState(
+  entry: FleetWatchEntry,
+  settings: AppSettings,
+  expectedActiveRentalEndsAtMs: number,
+  nowMs: number,
+  fetchBundle: NonNullable<LcfsDependencies['fetchBundle']>,
+): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> } | LcfsAttemptResult> {
+  const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
+  if (mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) {
+    return { kind: 'blocked', reason: 'Active rental changed after this LCFS attempt was scheduled' };
+  }
+  const plan = planLcfsReservation(entry, mapped, deriveWalletPosition(mapped, settings.walletAddress), nowMs);
+  if (plan.kind === 'blocked') return { kind: 'blocked', reason: plan.detail };
+  return { raw, mapped, plan };
+}
+
+async function buildCandidate(
+  inspected: { raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> },
+  settings: AppSettings,
+  hotWalletSecret: string,
+  dependencies: LcfsDependencies,
+): Promise<PreparedLcfsCandidate> {
+  const built = await (dependencies.build ?? buildUnsignedAtlasReservation)({
+    plan: inspected.plan,
+    walletAddress: settings.walletAddress,
+    challengerProfile: settings.playerProfile,
+    rpcUrl: settings.rpcUrl,
+    snapshot: inspected.raw,
+  });
+  if (!Array.isArray(built)) throw new Error('SDK did not return an instruction array');
+  const wireTransaction = await (dependencies.prepareTransaction ?? prepareLcfsTransaction)(
+    built as Instruction[], settings, hotWalletSecret,
+  );
+  return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction };
+}
+
+async function prepareOrRefreshCandidate(
+  previous: PreparedLcfsCandidate | null,
+  entry: FleetWatchEntry,
+  settings: AppSettings,
+  hotWalletSecret: string,
+  expectedActiveRentalEndsAtMs: number,
+  dependencies: LcfsDependencies,
+  nowMs: number,
+): Promise<PreparedLcfsCandidate | LcfsAttemptResult> {
+  const fetchBundle = dependencies.fetchBundle ?? loadBundle;
+  const inspected = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, nowMs, fetchBundle);
+  if ('kind' in inspected) return inspected;
+  const fingerprint = candidateFingerprint(inspected.mapped, inspected.plan);
+  if (previous?.fingerprint === fingerprint) return previous;
+  return buildCandidate(inspected, settings, hotWalletSecret, dependencies);
 }
 
 export async function executeLcfsAttempt(
@@ -68,33 +203,42 @@ export async function executeLcfsAttempt(
   if (!settings.useHeliusSender) return { kind: 'blocked', reason: 'Helius Sender is disabled' };
   if (!hotWalletSecret.trim()) return { kind: 'blocked', reason: 'No signing wallet is stored' };
   if (!settings.playerProfile) return { kind: 'blocked', reason: 'Player Profile is required' };
-  const fetchBundle = dependencies.fetchBundle ?? (async (contractAddress: string, rpcUrl: string) => {
-    const raw = await loadRawContractSnapshot(contractAddress, rpcUrl);
-    return { raw, mapped: mapContractSnapshot(raw) };
+  if (expectedActiveRentalEndsAtMs === undefined) return { kind: 'blocked', reason: 'Expected active rental end is required' };
+
+  const now = dependencies.now ?? (nowMs === undefined ? Date.now : () => nowMs);
+  const waitUntil = dependencies.waitUntil ?? (async (targetMs: number) => {
+    const delayMs = targetMs - Date.now();
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   });
-  const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
-  if (expectedActiveRentalEndsAtMs !== undefined && mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) {
-    return { kind: 'blocked', reason: 'Active rental changed after this LCFS attempt was scheduled' };
-  }
-  const evaluationNowMs = nowMs ?? Date.now();
-  const eligibility = evaluateLcfsEligibility(
-    entry, mapped, deriveWalletPosition(mapped, settings.walletAddress), settings.lcfsLeadTimeSeconds, evaluationNowMs,
+  const waitForPhase = async (targetMs: number) => {
+    if (now() < targetMs) await waitUntil(targetMs);
+  };
+  const schedule = lcfsSchedule(expectedActiveRentalEndsAtMs, settings.lcfsLeadTimeSeconds);
+
+  await waitForPhase(schedule.prepareAtMs);
+  let candidate = await prepareOrRefreshCandidate(
+    null, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
   );
-  if (eligibility.kind === 'blocked') return eligibility;
-  if (evaluationNowMs < eligibility.executeAtMs) return { kind: 'blocked', reason: 'LCFS send time has not arrived' };
-  const built = await (dependencies.build ?? buildUnsignedAtlasReservation)({
-    plan: eligibility.plan,
-    walletAddress: settings.walletAddress,
-    challengerProfile: settings.playerProfile,
-    rpcUrl: settings.rpcUrl,
-    snapshot: raw,
-  });
-  if (!Array.isArray(built)) throw new Error('SDK did not return an instruction array');
-  if (nowMs === undefined && Date.now() >= eligibility.plan.activeRentalEndsAtMs) {
+  if ('kind' in candidate) return candidate;
+
+  await waitForPhase(schedule.refreshAtMs);
+  candidate = await prepareOrRefreshCandidate(
+    candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
+  );
+  if ('kind' in candidate) return candidate;
+
+  await waitForPhase(schedule.finalCheckAtMs);
+  candidate = await prepareOrRefreshCandidate(
+    candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
+  );
+  if ('kind' in candidate) return candidate;
+
+  await waitForPhase(schedule.sendAtMs);
+  if (now() >= expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental ended while the LCFS transaction was being prepared' };
   }
-  const signature = await (dependencies.submit ?? submitLcfsWithHelius)(built as Instruction[], settings, hotWalletSecret);
-  return { kind: 'submitted', signature, attemptKey: lcfsAttemptKey(entry.id, eligibility.plan.activeRentalEndsAtMs) };
+  const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidate.wireTransaction);
+  return { kind: 'submitted', signature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
 }
 
 function decodeBase58(value: string): Uint8Array {
@@ -138,7 +282,16 @@ function u64InstructionData(discriminator: number, value: bigint, discriminatorB
   return data;
 }
 
-async function submitLcfsWithHelius(
+export function normalizeInstructionSigners(instructions: Instruction[], signer: TransactionSigner): Instruction[] {
+  return instructions.map((instruction) => ({
+    ...instruction,
+    accounts: instruction.accounts?.map((account) => account.address === signer.address && 'signer' in account
+      ? { ...account, signer }
+      : account),
+  }));
+}
+
+async function prepareLcfsTransaction(
   instructions: Instruction[],
   settings: AppSettings,
   hotWalletSecret: string,
@@ -168,22 +321,26 @@ async function submitLcfsWithHelius(
     const lifetimeMessage = setTransactionMessageLifetimeUsingBlockhash({
       blockhash: blockhash(lifetime.blockhash), lastValidBlockHeight: lifetime.lastValidBlockHeight,
     }, feePayerMessage);
-    const withInstructions = appendTransactionMessageInstructions([computeBudget, tip, ...instructions], lifetimeMessage);
-    const transaction = await signTransactionMessageWithSigners(withInstructions);
-    const response = await fetch(HELIUS_SENDER_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: Date.now().toString(), method: 'sendTransaction',
-        params: [getBase64EncodedWireTransaction(transaction), { encoding: 'base64', skipPreflight: true, maxRetries: 0 }],
-      }),
-    });
-    const payload = await response.json() as { result?: string; error?: { code?: number; message?: string } };
-    if (!response.ok || payload.error || !payload.result) {
-      throw new Error(`Helius Sender failed${payload.error?.code ? ` (${payload.error.code})` : ''}: ${payload.error?.message ?? response.statusText}`);
-    }
-    return payload.result;
+    const normalizedInstructions = normalizeInstructionSigners(instructions, signer);
+    const withInstructions = appendTransactionMessageInstructions([computeBudget, tip, ...normalizedInstructions], lifetimeMessage);
+    return getBase64EncodedWireTransaction(await signTransactionMessageWithSigners(withInstructions));
   } finally {
     secret.fill(0);
   }
+}
+
+async function submitPreparedToHelius(wireTransaction: string): Promise<string> {
+  const response = await fetch(HELIUS_SENDER_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: Date.now().toString(), method: 'sendTransaction',
+      params: [wireTransaction, { encoding: 'base64', skipPreflight: true, maxRetries: 0 }],
+    }),
+  });
+  const payload = await response.json() as { result?: string; error?: { code?: number; message?: string } };
+  if (!response.ok || payload.error || !payload.result) {
+    throw new Error(`Helius Sender failed${payload.error?.code ? ` (${payload.error.code})` : ''}: ${payload.error?.message ?? response.statusText}`);
+  }
+  return payload.result;
 }

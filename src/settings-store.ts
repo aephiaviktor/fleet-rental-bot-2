@@ -33,7 +33,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   useHeliusSender: false,
   transactionPriorityFeeMicroLamports: 1_000,
   heliusSenderTipSol: 0.0002,
-  lcfsLeadTimeSeconds: 3,
+  lcfsLeadTimeSeconds: 5,
   walletAddress: '',
   challengerProfileAddress: '',
 };
@@ -74,10 +74,11 @@ export function validateSettings(value: unknown): AppSettings {
   if (useHeliusSender && heliusSenderTipSol < 0.0002) {
     throw new Error('Helius Sender tip must be at least 0.0002 SOL when enabled');
   }
-  const lcfsLeadTimeSeconds = candidate.lcfsLeadTimeSeconds ?? 3;
-  if (!Number.isInteger(lcfsLeadTimeSeconds) || lcfsLeadTimeSeconds < 0) {
+  const configuredLcfsLeadTimeSeconds = candidate.lcfsLeadTimeSeconds ?? 5;
+  if (!Number.isInteger(configuredLcfsLeadTimeSeconds) || configuredLcfsLeadTimeSeconds < 0) {
     throw new Error('LCFS lead time must be a non-negative integer number of seconds');
   }
+  const lcfsLeadTimeSeconds = Math.max(5, configuredLcfsLeadTimeSeconds);
   const normalizedProfile = playerProfile.trim() === '' ? '' : requireSolanaAddress(playerProfile, 'playerProfile');
   return {
     version: 1,

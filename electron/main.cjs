@@ -223,13 +223,12 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
     const key = lcfsAttemptKey(entry.id, decision.plan.activeRentalEndsAtMs);
     eligibleKeys.add(key);
     if (attempted.has(key) || lcfsTimers.has(key)) continue;
-    const delay = Math.max(0, decision.executeAtMs - nowMs);
+    const delay = Math.max(0, decision.prepareAtMs - nowMs);
     if (delay > 2_147_000_000) continue;
     const timer = setTimeout(async () => {
-      lcfsTimers.delete(key);
       try {
         if (!await recordLcfsAttempt(key, 'started')) return;
-        emitLcfsStatus(entry.id, 'sending', 'Re-checking live limits and submitting LCFS bid');
+        emitLcfsStatus(entry.id, 'sending', 'Preparing LCFS bid and monitoring live reservation state');
         const [latestWatchlist, latestSettings] = await Promise.all([
           (await domainModule('watchlist-store')).loadWatchlist(watchlistPath()), loadRuntimeSettings(),
         ]);
@@ -251,10 +250,12 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
         const detail = error instanceof Error ? error.message : String(error);
         await recordLcfsAttempt(key, 'failed', detail).catch(() => {});
         emitLcfsStatus(entry.id, 'failed', detail);
+      } finally {
+        lcfsTimers.delete(key);
       }
     }, delay);
     lcfsTimers.set(key, timer);
-    emitLcfsStatus(entry.id, 'scheduled', `LCFS bid scheduled for ${new Date(decision.executeAtMs).toLocaleTimeString()}`);
+    emitLcfsStatus(entry.id, 'scheduled', `LCFS preparation scheduled for ${new Date(decision.prepareAtMs).toLocaleTimeString()}; send target ${new Date(decision.sendAtMs).toLocaleTimeString()}`);
   }
   for (const [key, timer] of lcfsTimers) {
     if (refreshedEntryIds && ![...refreshedEntryIds].some((entryId) => key.startsWith(`${entryId}:`))) continue;

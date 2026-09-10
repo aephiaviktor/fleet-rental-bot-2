@@ -6,8 +6,11 @@ export interface AppSettings {
   version: 1;
   aephiaApiKey: string;
   playerProfile: string;
+  /** Legacy flag retained only for settings-file compatibility; the general limiter is no longer used. */
   useRpcLimiter: boolean;
   rpcUrl: string;
+  rpcRequestsPerSecond: number;
+  /** Legacy fixed interval retained only for settings-file compatibility; adaptive scheduling is authoritative. */
   refreshIntervalSeconds: number;
   useHeliusSender: boolean;
   transactionPriorityFeeMicroLamports: number;
@@ -23,8 +26,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
   aephiaApiKey: '',
   playerProfile: '',
-  useRpcLimiter: true,
+  useRpcLimiter: false,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
+  rpcRequestsPerSecond: 5,
   refreshIntervalSeconds: 60,
   useHeliusSender: false,
   transactionPriorityFeeMicroLamports: 1_000,
@@ -49,6 +53,10 @@ export function validateSettings(value: unknown): AppSettings {
   if (typeof playerProfile !== 'string') throw new Error('Player Profile must be a string');
   const walletAddress = candidate.walletAddress ?? '';
   if (typeof walletAddress !== 'string') throw new Error('Wallet address must be a string');
+  const rpcRequestsPerSecond = candidate.rpcRequestsPerSecond ?? 5;
+  if (!Number.isFinite(rpcRequestsPerSecond) || rpcRequestsPerSecond < 1 || rpcRequestsPerSecond > 10) {
+    throw new Error('Fleet Rental Bot 2 RPC rate must be between 1 and 10 requests per second');
+  }
   const refreshIntervalSeconds = candidate.refreshIntervalSeconds;
   if (!Number.isInteger(refreshIntervalSeconds) || refreshIntervalSeconds! < 15 || refreshIntervalSeconds! > 3600) {
     throw new Error('Refresh interval must be between 15 and 3600 seconds');
@@ -75,8 +83,9 @@ export function validateSettings(value: unknown): AppSettings {
     version: 1,
     aephiaApiKey: aephiaApiKey.trim(),
     playerProfile: normalizedProfile,
-    useRpcLimiter: candidate.useRpcLimiter ?? true,
+    useRpcLimiter: false,
     rpcUrl: candidate.rpcUrl,
+    rpcRequestsPerSecond,
     refreshIntervalSeconds: refreshIntervalSeconds!,
     useHeliusSender,
     transactionPriorityFeeMicroLamports,

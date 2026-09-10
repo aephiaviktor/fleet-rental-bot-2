@@ -30,6 +30,10 @@ function lcfsStatePath() {
   return path.join(app.getPath('userData'), 'lcfs-state.json');
 }
 
+function sharedDatabasePath() {
+  return path.join(path.dirname(path.dirname(INSTANCE.userData)), 'fleet-rental-bot-2.sqlite');
+}
+
 async function readLcfsState() {
   try {
     const value = JSON.parse(await fs.readFile(lcfsStatePath(), 'utf8'));
@@ -64,7 +68,7 @@ function emitLcfsStatus(entryId, status, detail) {
   if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('lcfs:status', { entryId, status, detail });
 }
 
-async function scheduleLcfsAttempts(watchlist, settings, results) {
+async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntryIds = null) {
   const [{ evaluateLcfsEligibility, executeLcfsAttempt, lcfsAttemptKey }, state] = await Promise.all([
     domainModule('lcfs'), readLcfsState(),
   ]);
@@ -98,9 +102,10 @@ async function scheduleLcfsAttempts(watchlist, settings, results) {
         const latestEntry = latestWatchlist.entries.find((candidate) => candidate.id === entry.id);
         if (!latestEntry) throw new Error('Watchlist entry no longer exists');
         if (latestEntry.contractAddress !== entry.contractAddress) throw new Error('Rental contract changed after this LCFS attempt was scheduled');
-        const outcome = await executeLcfsAttempt(
+        const { withUrgentRpcPriority } = await domainModule('rpc-fetch-limiter');
+        const outcome = await withUrgentRpcPriority(sharedDatabasePath(), () => executeLcfsAttempt(
           latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {}, decision.plan.activeRentalEndsAtMs,
-        );
+        ));
         if (outcome.kind === 'submitted') {
           await recordLcfsAttempt(key, 'submitted', outcome.signature);
           emitLcfsStatus(entry.id, 'submitted', `LCFS transaction submitted: ${outcome.signature}`);
@@ -118,6 +123,7 @@ async function scheduleLcfsAttempts(watchlist, settings, results) {
     emitLcfsStatus(entry.id, 'scheduled', `LCFS bid scheduled for ${new Date(decision.executeAtMs).toLocaleTimeString()}`);
   }
   for (const [key, timer] of lcfsTimers) {
+    if (refreshedEntryIds && ![...refreshedEntryIds].some((entryId) => key.startsWith(`${entryId}:`))) continue;
     if (!eligibleKeys.has(key)) { clearTimeout(timer); lcfsTimers.delete(key); }
   }
 }
@@ -167,12 +173,12 @@ async function loadSettingsWithSecrets() {
 }
 
 async function loadRuntimeSettings() {
-  const { resolveRpcUrl } = await domainModule('rpc-limiter');
+  const { getRpcRequestsPerSecond } = await domainModule('fleet-database');
   const settings = await loadSettingsWithSecrets();
   const walletAddress = settings.hotWalletSecret
     ? getHotWalletAddressFromSecret(settings.hotWalletSecret)
     : settings.walletAddress;
-  return { ...settings, walletAddress, rpcUrl: await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl) };
+  return { ...settings, walletAddress, rpcRequestsPerSecond: getRpcRequestsPerSecond(sharedDatabasePath()), rpcUrl: settings.rpcUrl };
 }
 
 function secureSettingsStatus(settings) {
@@ -222,6 +228,24 @@ ipcMain.handle('watchlist:load', async () => {
   return { document: await loadWatchlist(watchlistPath()), columns: COLUMN_DEFINITIONS };
 });
 
+ipcMain.handle('watchlist:cached', async () => {
+  const [{ loadWatchlist }, { loadCachedRows }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('fleet-database'),
+  ]);
+  const watchlist = await loadWatchlist(watchlistPath());
+  const contracts = new Map(watchlist.entries.map((entry) => [entry.id, entry.contractAddress]));
+  return loadCachedRows(sharedDatabasePath(), INSTANCE.instance)
+    .filter((cached) => watchlist.entries.find((entry) => entry.id === cached.row.entry.id)?.enabled
+      && contracts.get(cached.row.entry.id) === cached.row.entry.contractAddress)
+    .map((cached) => ({
+      id: cached.row.entry.id,
+      ok: true,
+      row: cached.row,
+      source: 'cache',
+      fetchedAtMs: cached.fetchedAtMs,
+    }));
+});
+
 ipcMain.handle('watchlist:save', async (_event, document) => {
   const { saveWatchlist } = await domainModule('watchlist-store');
   await saveWatchlist(watchlistPath(), document);
@@ -229,9 +253,13 @@ ipcMain.handle('watchlist:save', async (_event, document) => {
 });
 
 ipcMain.handle('settings:load', async () => {
-  const settings = await loadSettingsWithSecrets();
+  const [{ getRpcRequestsPerSecond }, settings] = await Promise.all([
+    domainModule('fleet-database'), loadSettingsWithSecrets(),
+  ]);
   return {
     ...settings,
+    useRpcLimiter: false,
+    rpcRequestsPerSecond: getRpcRequestsPerSecond(sharedDatabasePath()),
     aephiaApiKey: '',
     hotWalletSecret: '',
     hotWalletAddress: hotWalletAddress(settings),
@@ -240,7 +268,9 @@ ipcMain.handle('settings:load', async () => {
 });
 
 ipcMain.handle('settings:save', async (_event, settings) => {
-  const { saveSettings } = await domainModule('settings-store');
+  const [{ saveSettings }, { setRpcRequestsPerSecond }] = await Promise.all([
+    domainModule('settings-store'), domainModule('fleet-database'),
+  ]);
   const current = await loadSettingsWithSecrets();
   const replacementKey = String(settings?.aephiaApiKey || '').trim();
   const replacementWallet = String(settings?.hotWalletSecret || '').trim();
@@ -250,7 +280,9 @@ ipcMain.handle('settings:save', async (_event, settings) => {
   if (replacementKey) replacements.aephiaApiKey = replacementKey;
   if (replacementWallet) replacements.hotWalletSecret = replacementWallet;
   if (Object.keys(replacements).length) await writeSecureValues(replacements);
-  await saveSettings(settingsPath(), { ...current, ...settings, aephiaApiKey: '', walletAddress: nextWallet ? getHotWalletAddressFromSecret(nextWallet) : current.walletAddress });
+  const nextSettings = { ...current, ...settings, useRpcLimiter: false, aephiaApiKey: '', walletAddress: nextWallet ? getHotWalletAddressFromSecret(nextWallet) : current.walletAddress };
+  await saveSettings(settingsPath(), nextSettings);
+  setRpcRequestsPerSecond(sharedDatabasePath(), nextSettings.rpcRequestsPerSecond);
   const next = { ...current, aephiaApiKey: replacementKey || current.aephiaApiKey, hotWalletSecret: nextWallet };
   return { ok: true, hotWalletAddress: hotWalletAddress(next), secureSettingsStatus: secureSettingsStatus(next) };
 });
@@ -266,28 +298,49 @@ ipcMain.handle('settings:remove-hot-wallet', async () => {
 ipcMain.handle('profile:faction', async () => {
   const settings = await loadSettingsWithSecrets();
   if (!settings.playerProfile) return { faction: null, profileFactionAddress: null };
-  const [{ resolveRpcUrl }, { resolvePlayerFaction }] = await Promise.all([
-    domainModule('rpc-limiter'), domainModule('profile-faction'),
-  ]);
-  const rpcUrl = await resolveRpcUrl(settings.useRpcLimiter, settings.rpcUrl);
-  return resolvePlayerFaction(settings.playerProfile, rpcUrl);
+  const { resolvePlayerFaction } = await domainModule('profile-faction');
+  return resolvePlayerFaction(settings.playerProfile, settings.rpcUrl);
 });
 
 ipcMain.handle('rpc-limiter:status', async () => {
-  const { getRpcLimiterStatus } = await domainModule('rpc-limiter');
-  return getRpcLimiterStatus();
+  const { getRpcRequestsPerSecond } = await domainModule('fleet-database');
+  return {
+    stateFile: sharedDatabasePath(),
+    enabled: true,
+    activeUrl: 'Dedicated Fleet Rental Bot 2 RPC pacing',
+    mainUrl: '',
+    fallbackUrl: '',
+    requestsPerSecond: getRpcRequestsPerSecond(sharedDatabasePath()),
+    updatedAt: '',
+  };
 });
 
-ipcMain.handle('watchlist:refresh', async () => {
-  const [{ loadWatchlist }, { refreshWatchlist }] = await Promise.all([
-    domainModule('watchlist-store'), domainModule('live-refresh'),
+ipcMain.handle('refresh:next-delay', async (_event, endTimes) => {
+  const { nextRefreshDelayMs } = await domainModule('refresh-schedule');
+  const values = Array.isArray(endTimes)
+    ? endTimes.map((value) => value === null || Number.isFinite(value) ? value : null)
+    : [];
+  return nextRefreshDelayMs(values);
+});
+
+ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {
+  const [{ loadWatchlist }, { refreshWatchlist, mergeRefreshWithCache }, { loadCachedRows, saveCachedRow }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('live-refresh'), domainModule('fleet-database'),
   ]);
   const [watchlist, settings] = await Promise.all([
     loadWatchlist(watchlistPath()), loadRuntimeSettings(),
   ]);
-  const results = await refreshWatchlist(watchlist.entries, settings);
-  await scheduleLcfsAttempts(watchlist, settings, results);
-  return results;
+  const requestedIds = Array.isArray(entryIds) ? new Set(entryIds.filter((value) => typeof value === 'string')) : null;
+  const selectedEntries = requestedIds
+    ? watchlist.entries.filter((entry) => requestedIds.has(entry.id))
+    : watchlist.entries;
+  const liveResults = await refreshWatchlist(selectedEntries, settings);
+  for (const result of liveResults) {
+    if (result.ok) saveCachedRow(sharedDatabasePath(), INSTANCE.instance, result.row, result.fetchedAtMs);
+  }
+  await scheduleLcfsAttempts(watchlist, settings, liveResults, new Set(selectedEntries.map((entry) => entry.id)));
+  const expectedContracts = new Map(watchlist.entries.map((entry) => [entry.id, entry.contractAddress]));
+  return mergeRefreshWithCache(liveResults, loadCachedRows(sharedDatabasePath(), INSTANCE.instance), expectedContracts);
 });
 
 ipcMain.handle('reservation:review', async (_event, entryId) => {
@@ -324,7 +377,9 @@ if (!hasSingleInstanceLock) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    const { installLimitedRpcFetch } = await domainModule('rpc-fetch-limiter');
+    installLimitedRpcFetch(sharedDatabasePath());
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

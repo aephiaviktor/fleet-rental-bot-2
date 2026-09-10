@@ -7,15 +7,18 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, validateSettings } from '
 
 const profile = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
 
-test('missing settings use RPC limiter and conservative defaults', async () => {
+test('missing settings use the dedicated five request-per-second default', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
   assert.deepEqual(await loadSettings(join(root, 'missing.json')), DEFAULT_SETTINGS);
-  assert.equal(DEFAULT_SETTINGS.useRpcLimiter, true);
+  assert.equal(DEFAULT_SETTINGS.useRpcLimiter, false);
+  assert.equal(DEFAULT_SETTINGS.rpcRequestsPerSecond, 5);
 });
 
-test('settings require HTTP RPC and bounded refresh interval', () => {
+test('settings require HTTP RPC and a conservative dedicated request rate', () => {
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, rpcUrl: 'file:///secret' }), /HTTP or HTTPS/);
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, refreshIntervalSeconds: 5 }), /between 15 and 3600/);
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, rpcRequestsPerSecond: 0 }), /between 1 and 10/);
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, rpcRequestsPerSecond: 11 }), /between 1 and 10/);
+  assert.equal(validateSettings({ ...DEFAULT_SETTINGS, rpcRequestsPerSecond: undefined }).rpcRequestsPerSecond, 5);
 });
 
 test('player profile must be empty or a valid Solana address', () => {

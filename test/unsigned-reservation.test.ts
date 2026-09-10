@@ -21,9 +21,10 @@ test('assembles official SDK parameters with a no-op signer and exact guarded va
   const result = await buildUnsignedAtlasReservation({
     plan, walletAddress: wallet, challengerProfile: profile,
     rpcUrl: 'https://api.mainnet-beta.solana.com', snapshot,
+    initializeBorrower: async () => [],
     reserve: async (params) => { captured = params as unknown as Record<string, unknown>; return instructions as never; },
   });
-  assert.equal(result, instructions);
+  assert.deepEqual(result, instructions);
   assert.equal((captured!.challenger as { address: string }).address, wallet);
   assert.equal(captured!.challengerProfile, profile);
   assert.equal(captured!.contract, plan.contractAddress);
@@ -32,6 +33,33 @@ test('assembles official SDK parameters with a no-op signer and exact guarded va
   assert.equal(captured!.autoMinBid, false);
   assert.equal(captured!.computeUnits, 300_000);
   assert.equal((captured!.rate as { stardust: bigint }).stardust, 0n);
+});
+
+test('unwraps the official SDK iterable instruction result', async () => {
+  const instructions = [{ programAddress: 'program', accounts: [], data: new Uint8Array() }];
+  const sdkResult = {
+    instructions,
+    *[Symbol.iterator]() { yield* instructions; },
+  };
+  const result = await buildUnsignedAtlasReservation({
+    plan, walletAddress: wallet, challengerProfile: profile,
+    rpcUrl: 'https://api.mainnet-beta.solana.com', snapshot,
+    initializeBorrower: async () => [],
+    reserve: async () => sdkResult,
+  });
+  assert.deepEqual(result, instructions);
+});
+
+test('prepends first-use borrower initialization before reserving', async () => {
+  const initialize = [{ programAddress: 'initialize', accounts: [], data: new Uint8Array() }];
+  const reserve = [{ programAddress: 'reserve', accounts: [], data: new Uint8Array() }];
+  const result = await buildUnsignedAtlasReservation({
+    plan, walletAddress: wallet, challengerProfile: profile,
+    rpcUrl: 'https://api.mainnet-beta.solana.com', snapshot,
+    initializeBorrower: async () => ({ *[Symbol.iterator]() { yield* initialize; } }),
+    reserve: async () => ({ *[Symbol.iterator]() { yield* reserve; } }),
+  });
+  assert.deepEqual(result, [...initialize, ...reserve]);
 });
 
 test('refuses blocked plans and malformed wallet/profile addresses', async () => {

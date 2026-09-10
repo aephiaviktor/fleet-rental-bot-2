@@ -5,7 +5,7 @@ import type { FleetWatchEntry } from './model.js';
 import { requireSolanaAddress } from './solana-address.js';
 
 export interface WatchlistDocument {
-  version: 2;
+  version: 3;
   entries: FleetWatchEntry[];
   visibleColumns: ColumnId[];
 }
@@ -40,18 +40,19 @@ export function validateWatchEntry(value: unknown): FleetWatchEntry {
 
 export function parseWatchlist(text: string): WatchlistDocument {
   const parsed = JSON.parse(text) as { version?: number; entries?: unknown[]; visibleColumns?: unknown };
-  if (parsed.version !== 1 && parsed.version !== 2) throw new Error(`Unsupported watchlist version: ${String(parsed.version)}`);
+  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) throw new Error(`Unsupported watchlist version: ${String(parsed.version)}`);
   if (!Array.isArray(parsed.entries)) throw new Error('Watchlist entries must be an array');
   const entries = parsed.entries.map(validateWatchEntry);
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('Watchlist entry IDs must be unique');
   if (new Set(entries.map((entry) => entry.contractAddress)).size !== entries.length) throw new Error('Contract addresses must be unique');
   const visibleColumns = normalizeVisibleColumns(parsed.visibleColumns);
-  if (parsed.version === 1) {
-    for (const column of ['canSafelyOperate', 'comment'] as const) {
+  if (parsed.version === 1 || parsed.version === 2) {
+    for (const column of ['enabled', 'label', 'contractAddress', 'requestedDuration', 'estimatedNetValueAtlas',
+      'maximumRentalRate', 'maximumReservationBid', 'canSafelyOperate', 'comment', 'endingIn', 'lcfs'] as const) {
       if (!visibleColumns.includes(column)) visibleColumns.push(column);
     }
   }
-  return { version: 2, entries, visibleColumns };
+  return { version: 3, entries, visibleColumns };
 }
 
 export async function loadWatchlist(filePath: string): Promise<WatchlistDocument> {
@@ -59,7 +60,7 @@ export async function loadWatchlist(filePath: string): Promise<WatchlistDocument
     return parseWatchlist(await readFile(filePath, 'utf8'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 2, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
+      return { version: 3, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
     }
     throw error;
   }

@@ -22,11 +22,11 @@ const snapshot: FleetContractSnapshot = {
 };
 const position: WalletPosition = { status: 'none', atlasLocked: 0, reservedAtMs: null };
 
-test('LCFS settings default to five seconds and require a non-negative integer', () => {
-  assert.equal(DEFAULT_SETTINGS.lcfsLeadTimeSeconds, 5);
+test('LCFS settings default to three seconds and require a non-negative integer', () => {
+  assert.equal(DEFAULT_SETTINGS.lcfsLeadTimeSeconds, 3);
   const legacy = { ...DEFAULT_SETTINGS } as Partial<typeof DEFAULT_SETTINGS>;
   delete legacy.lcfsLeadTimeSeconds;
-  assert.equal(validateSettings(legacy).lcfsLeadTimeSeconds, 5);
+  assert.equal(validateSettings(legacy).lcfsLeadTimeSeconds, 3);
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, lcfsLeadTimeSeconds: -1 }), /LCFS/);
   assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, lcfsLeadTimeSeconds: 1.5 }), /LCFS/);
 });
@@ -62,7 +62,7 @@ test('LCFS attempt keys deduplicate an entry and rental end while allowing the n
 
 test('LCFS re-fetches at send time and submits the current next bid exactly once', async () => {
   let submittedBid: number | null = null;
-  const result = await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', 5_000, {
+  const result = await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', 7_000, {
     fetchBundle: async () => ({ raw: {} as never, mapped: snapshot }),
     build: async ({ plan }) => { submittedBid = plan.kind === 'ready' ? plan.bidAtlas : null; return []; },
     submit: async () => 'signature',
@@ -101,8 +101,18 @@ test('LCFS sends nothing when Sender is disabled or the re-fetched next bid exce
 test('sidebar selector order is sourced from the exact table column order', async () => {
   const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
   assert.match(renderer, /const tableColumnOrder=/);
-  assert.match(renderer, /comment[^\n]*lcfs[^\n]*rentalRate/);
+  assert.match(renderer, /comment[^\n]*endingIn[^\n]*lcfs[^\n]*rentalRate/);
   assert.match(renderer, /for\(const c of tableColumnOrder\.filter/);
+});
+
+test('every displayed data column is selectable and LCFS and Ending In default visible', async () => {
+  const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(renderer, /!c\.selectable\|\|/);
+  assert.match(renderer, /S\.document\.visibleColumns\.includes\(id\)/);
+  const legacy = parseWatchlist(JSON.stringify({ version: 2, entries: [entry], visibleColumns: ['comment'] }));
+  assert.equal(legacy.version, 3);
+  assert.equal(legacy.visibleColumns.includes('lcfs'), true);
+  assert.equal(legacy.visibleColumns.includes('endingIn'), true);
 });
 
 test('Settings exposes LCFS lead time under the Helius section', async () => {

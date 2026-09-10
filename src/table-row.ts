@@ -4,6 +4,7 @@ import {
   holdingFraction,
 } from './metrics.js';
 import type { FleetContractSnapshot, FleetTableRow, FleetWatchEntry, WalletPosition } from './model.js';
+import { formatRemainingRentalTime } from './remaining-time.js';
 
 export function buildFleetTableRow(
   entry: FleetWatchEntry,
@@ -57,6 +58,7 @@ export function buildFleetTableRow(
     bonusIfOutbidNowAtlas,
     projectedExpiryFloorBonusAtlas,
     maximumRemainingLockMs,
+    endingIn: formatRemainingRentalTime(snapshot.activeRentalEndsAtMs, nowMs),
     estimatedPoints,
     pointsPerThousandAtlas: rentalCostAtlas > 0 ? snapshot.effectivePointsPerDay / rentalCostAtlas * 1_000 : null,
   };

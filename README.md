@@ -12,7 +12,7 @@ renderer after storage. The Settings-only privacy control masks the direct RPC U
 launch; public profile, wallet, and contract addresses and fleet notes remain visible.
 
 Helius Sender settings include enable/disable, transaction priority fee in microLamports/CU,
-Sender tip in SOL, and the LCFS lead time (five seconds by default). A fleet row is eligible
+Sender tip in SOL, and the LCFS lead time (three seconds by default). Every data column can be shown or hidden from the left sidebar. The default-visible **Ending In** column shows the active rental countdown as whole days and hours, and **LCFS** is also visible by default. A fleet row is eligible
 only when its LCFS checkbox is on. At the send time the contract is fetched again; the bot
 submits exactly one current Next bid only when rental rate/day and Next bid are each less than
 or equal to that row's configured maximum. Attempt state is persisted before submission to

@@ -42,7 +42,11 @@ test('does not silently relabel legacy gross operating values as net values', ()
   assert.equal('estimatedOperatingValueAtlas' in document.entries[0], false);
 });
 
-test('safe-to-operate and note are selectable by default while net and recommendation columns are gone', () => {
+test('all current table columns are selectable and visible by default', () => {
+  for (const id of ['enabled', 'label', 'contractAddress', 'requestedDuration', 'estimatedNetValueAtlas',
+    'maximumRentalRate', 'maximumReservationBid', 'canSafelyOperate', 'comment', 'endingIn', 'lcfs']) {
+    assert.equal(DEFAULT_VISIBLE_COLUMNS.includes(id as never), true, `${id} should default visible`);
+  }
   assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('canSafelyOperate'), true);
   assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('comment'), true);
   assert.equal(DEFAULT_VISIBLE_COLUMNS.includes('netValue' as never), false);
@@ -51,13 +55,16 @@ test('safe-to-operate and note are selectable by default while net and recommend
 
 test('normalizes selectable columns and ignores unknown values', () => {
   const document = parseWatchlist(JSON.stringify({ version: 1, entries: [entry], visibleColumns: ['label', 'unknown', 'label'] }));
-  assert.deepEqual(document.visibleColumns, ['label', 'canSafelyOperate', 'comment']);
+  assert.equal(document.version, 3);
+  assert.equal(document.visibleColumns.includes('label'), true);
+  assert.equal(document.visibleColumns.includes('lcfs'), true);
+  assert.equal(document.visibleColumns.includes('endingIn'), true);
 });
 
 test('saves atomically and round-trips a validated document', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fleet-rental-bot-2-'));
   const filePath = path.join(directory, 'watchlist.json');
-  const document: WatchlistDocument = { version: 2, entries: [entry], visibleColumns: ['label', 'comment'] };
+  const document: WatchlistDocument = { version: 3, entries: [entry], visibleColumns: ['label', 'comment'] };
   await saveWatchlist(filePath, document);
   assert.deepEqual(await loadWatchlist(filePath), document);
   assert.match(await readFile(filePath, 'utf8'), /Fleet One/);

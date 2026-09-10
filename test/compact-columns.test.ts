@@ -26,11 +26,11 @@ test('table uses compact labels for every live column', async () => {
   }
 });
 
-test('editable net value follows Days while Safe and Note are selectable', async () => {
+test('editable net value follows Days while every data column uses visibility selection', async () => {
   const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
-  assert.match(renderer, /short:'Net value\/d'.*field:'estimatedNetValueAtlas'/);
-  assert.match(renderer, /id:'canSafelyOperate'.*selectable:true/);
-  assert.match(renderer, /id:'comment'.*selectable:true/);
+  assert.match(renderer, /id:'estimatedNetValueAtlas',short:'Net value\/d'/);
+  assert.match(renderer, /estimatedNetValueAtlas:\(\)=>editableCell\(entry,'estimatedNetValueAtlas'/);
+  assert.match(renderer, /tableColumnOrder\.filter\(id=>S\.document\.visibleColumns\.includes\(id\)\)/);
   assert.match(renderer, /requestedDurationSeconds:2073600/);
   assert.doesNotMatch(renderer, /estimatedOperatingValueAtlas/);
   assert.doesNotMatch(renderer, /recommendation:'Action'/);

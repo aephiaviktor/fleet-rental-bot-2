@@ -1,7 +1,10 @@
 export type ColumnGroup = 'fleet' | 'economics' | 'reservation' | 'loyalty' | 'decision';
 
 export type ColumnId =
+  | 'enabled'
   | 'label'
+  | 'contractAddress'
+  | 'estimatedNetValueAtlas'
   | 'rentalRate'
   | 'requestedDuration'
   | 'rentalCost'
@@ -27,7 +30,9 @@ export type ColumnId =
   | 'existingPointsBalance'
   | 'positionStatus'
   | 'canSafelyOperate'
-  | 'comment';
+  | 'comment'
+  | 'endingIn'
+  | 'lcfs';
 
 export interface ColumnDefinition {
   id: ColumnId;
@@ -37,12 +42,19 @@ export interface ColumnDefinition {
 }
 
 export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
+  { id: 'enabled', label: 'Enabled', group: 'fleet', defaultVisible: true },
   { id: 'label', label: 'Fleet', group: 'fleet', defaultVisible: true },
-  { id: 'rentalRate', label: 'Rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
+  { id: 'contractAddress', label: 'Rental contract', group: 'fleet', defaultVisible: true },
   { id: 'requestedDuration', label: 'Requested duration (days)', group: 'economics', defaultVisible: true },
-  { id: 'rentalCost', label: 'Estimated rental cost / day (ATLAS)', group: 'economics', defaultVisible: true },
-  { id: 'maximumRentalRate', label: 'Maximum rental rate / day (ATLAS)', group: 'economics', defaultVisible: false },
+  { id: 'estimatedNetValueAtlas', label: 'Estimated net value / day (ATLAS)', group: 'economics', defaultVisible: true },
+  { id: 'maximumRentalRate', label: 'Maximum rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'maximumReservationBid', label: 'Maximum reservation bid (ATLAS)', group: 'economics', defaultVisible: true },
+  { id: 'canSafelyOperate', label: 'Safe to operate', group: 'decision', defaultVisible: true },
+  { id: 'comment', label: 'Note', group: 'decision', defaultVisible: true },
+  { id: 'endingIn', label: 'Ending In', group: 'reservation', defaultVisible: true },
+  { id: 'lcfs', label: 'Last-come-first-serve', group: 'reservation', defaultVisible: true },
+  { id: 'rentalRate', label: 'Rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
+  { id: 'rentalCost', label: 'Estimated rental cost / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'reservationCurrency', label: 'Reservation currency', group: 'reservation', defaultVisible: false },
   { id: 'reservationBid', label: 'Current reservation premium (ATLAS or Points)', group: 'reservation', defaultVisible: true },
   { id: 'minimumTakeoverBid', label: 'Minimum takeover premium (ATLAS)', group: 'reservation', defaultVisible: true },
@@ -62,8 +74,6 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'pointsPerThousandAtlas', label: 'Points per 1,000 ATLAS', group: 'loyalty', defaultVisible: false },
   { id: 'existingPointsBalance', label: 'Existing Points balance', group: 'loyalty', defaultVisible: false },
   { id: 'positionStatus', label: 'Position status', group: 'decision', defaultVisible: true },
-  { id: 'canSafelyOperate', label: 'Safe to operate', group: 'decision', defaultVisible: true },
-  { id: 'comment', label: 'Note', group: 'decision', defaultVisible: true },
 ] as const;
 
 export const DEFAULT_VISIBLE_COLUMNS: readonly ColumnId[] = COLUMN_DEFINITIONS
@@ -74,5 +84,5 @@ export function normalizeVisibleColumns(value: unknown): ColumnId[] {
   const known = new Set<ColumnId>(COLUMN_DEFINITIONS.map((column) => column.id));
   if (!Array.isArray(value)) return [...DEFAULT_VISIBLE_COLUMNS];
   const normalized = value.filter((id): id is ColumnId => typeof id === 'string' && known.has(id as ColumnId));
-  return normalized.length > 0 ? [...new Set(normalized)] : [...DEFAULT_VISIBLE_COLUMNS];
+  return [...new Set(normalized)];
 }

@@ -53,6 +53,7 @@ export interface FleetTableRow {
   bonusIfOutbidNowAtlas: number | null;
   projectedExpiryFloorBonusAtlas: number | null;
   maximumRemainingLockMs: number | null;
+  endingIn: string;
   estimatedPoints: number;
   pointsPerThousandAtlas: number | null;
 }

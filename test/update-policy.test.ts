@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
@@ -42,21 +43,53 @@ test('accepts only the exact official portable release asset with a SHA-256 dige
   }), /official|digest/i);
 });
 
-test('builds a transactional Windows replacement with readiness rollback', () => {
+test('builds a transactional Windows replacement that waits for the app and portable wrapper', () => {
   const script = buildWindowsPortableUpdateScript({
-    parentPid: 42,
+    appPid: 42,
+    portablePid: 41,
     targetPath: "C:\\Apps\\Fleet Rental Bot 2\\Fleet Rental Bot 2's.exe",
     stagedPath: 'C:\\Temp\\next.exe',
     backupPath: 'C:\\Apps\\backup.exe',
     readyPath: 'C:\\Temp\\ready.json',
+    logPath: 'C:\\Temp\\update.log',
     token: 'token-123',
     instance: 'UST',
   });
   assert.match(script, /Wait-ForExit 42 180/);
+  assert.match(script, /Wait-ForExit 41 180/);
+  assert.ok(script.indexOf('Wait-ForExit 42 180') < script.indexOf('Wait-ForExit 41 180'));
+  assert.ok(script.indexOf('Wait-ForExit 41 180') < script.indexOf('Move-WithRetry \$TargetPath'));
   assert.match(script, /Move-Item -LiteralPath/);
   assert.match(script, /--instance/);
   assert.match(script, /--update-ready-file/);
   assert.match(script, /token-123/);
   assert.match(script, /Restore-PreviousVersion/);
   assert.match(script, /Fleet Rental Bot 2''s\.exe/);
+});
+
+test('persists updater phase and exception evidence to a durable helper log', async () => {
+  const script = buildWindowsPortableUpdateScript({
+    appPid: 42,
+    portablePid: 41,
+    targetPath: 'C:\\Apps\\current.exe',
+    stagedPath: 'C:\\Temp\\next.exe',
+    backupPath: 'C:\\Apps\\backup.exe',
+    readyPath: 'C:\\Temp\\ready.json',
+    logPath: 'C:\\Temp\\update.log',
+    token: 'token-123',
+    instance: 'UST',
+  });
+  assert.match(script, /\$LogPath = 'C:\\Temp\\update\.log'/);
+  assert.match(script, /Write-UpdateLog/);
+  assert.match(script, /waiting-for-app-exit/);
+  assert.match(script, /waiting-for-portable-wrapper-exit/);
+  assert.match(script, /replacement-installed/);
+  assert.match(script, /readiness-confirmed/);
+  assert.match(script, /rollback-started/);
+  assert.match(script, /\$_\.Exception\.ToString\(\)/);
+
+  const main = await readFile(new URL('../../electron/main.cjs', import.meta.url), 'utf8');
+  assert.match(main, /path\.join\(targetDirectory, 'fleet-rental-bot-2-update\.log'\)/);
+  assert.match(main, /portablePid: process\.ppid/);
+  assert.match(main, /stdio: \['ignore', helperLog\.fd, helperLog\.fd\]/);
 });

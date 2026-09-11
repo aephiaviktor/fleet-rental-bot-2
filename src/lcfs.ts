@@ -76,6 +76,10 @@ function roundedAtlas(value: number): number {
   return Number(value.toFixed(8));
 }
 
+function roundedUpToHundredAtlas(value: number): number {
+  return Math.ceil(roundedAtlas(value) / 100) * 100;
+}
+
 export function planLcfsReservation(
   entry: FleetWatchEntry,
   snapshot: FleetContractSnapshot,
@@ -86,24 +90,15 @@ export function planLcfsReservation(
   if (base.kind === 'blocked' || snapshot.reservationBidAtlas == null) return base;
 
   const currentBid = snapshot.reservationBidAtlas;
-  const defensiveFloor = roundedAtlas(currentBid * 1.1);
-  if (defensiveFloor > entry.maximumReservationBidAtlas) {
+  const bidAtlas = roundedUpToHundredAtlas(Math.max(base.bidAtlas, roundedAtlas(currentBid * 1.1)));
+  if (bidAtlas > entry.maximumReservationBidAtlas) {
     return {
       kind: 'blocked',
       reason: 'bid-limit',
-      detail: `110% of current ATLAS bid ${currentBid} exceeds maximum ${entry.maximumReservationBidAtlas}`,
+      detail: `Rounded 110% ATLAS bid ${bidAtlas} exceeds maximum ${entry.maximumReservationBidAtlas}`,
     };
   }
-
-  const aggressiveBid = roundedAtlas(currentBid * 1.25);
-  const bidAtlas = Math.max(
-    base.bidAtlas,
-    aggressiveBid <= entry.maximumReservationBidAtlas ? aggressiveBid : entry.maximumReservationBidAtlas,
-  );
-  if (bidAtlas > entry.maximumReservationBidAtlas) {
-    return { kind: 'blocked', reason: 'bid-limit', detail: `Required ATLAS bid ${bidAtlas} exceeds maximum ${entry.maximumReservationBidAtlas}` };
-  }
-  return { ...base, bidAtlas: roundedAtlas(bidAtlas) };
+  return { ...base, bidAtlas };
 }
 
 export function evaluateLcfsEligibility(

@@ -119,25 +119,35 @@ async function downloadUpdateAndRestart() {
 
     emitUpdateProgress('staging', 'Update verified. Preparing a safe restart…');
     const scriptPath = path.join(tempDir, 'install-update.ps1');
+    const logPath = path.join(targetDirectory, 'fleet-rental-bot-2-update.log');
+    await fs.writeFile(logPath, `${new Date().toISOString()} helper-launch-requested instance=${INSTANCE.instance} appPid=${process.pid} portablePid=${process.ppid}\n`, { mode: 0o600 });
     await fs.writeFile(scriptPath, buildWindowsPortableUpdateScript({
-      parentPid: process.pid,
+      appPid: process.pid,
+      portablePid: process.ppid,
       targetPath,
       stagedPath,
       backupPath,
       readyPath,
+      logPath,
       token,
       instance: INSTANCE.instance,
     }), 'utf8');
-    const helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
-      cwd: tempDir,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    await new Promise((resolve, reject) => {
-      helper.once('spawn', resolve);
-      helper.once('error', reject);
-    });
+    const helperLog = await fs.open(logPath, 'a');
+    let helper;
+    try {
+      helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+        cwd: tempDir,
+        detached: true,
+        stdio: ['ignore', helperLog.fd, helperLog.fd],
+        windowsHide: true,
+      });
+      await new Promise((resolve, reject) => {
+        helper.once('spawn', resolve);
+        helper.once('error', reject);
+      });
+    } finally {
+      await helperLog.close();
+    }
     helper.unref();
     emitUpdateProgress('restarting', `Fleet Rental Bot 2 v${latest.version} verified. Restarting…`);
     setTimeout(() => app.quit(), 250);

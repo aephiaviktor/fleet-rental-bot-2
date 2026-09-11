@@ -49,18 +49,34 @@ test('LCFS schedules preparation, refresh, final check, and send with measured s
   });
 });
 
-test('LCFS bids 125%, caps at Max bid, and blocks when even 110% exceeds Max bid', () => {
-  const normal = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 10, minimumTakeoverBidAtlas: 10.001 }, position, 5_000);
+test('LCFS bids 110% rounded up to a whole hundred and never exceeds Max bid', () => {
+  const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
+  const normal = planLcfsReservation(
+    realisticEntry,
+    { ...snapshot, reservationBidAtlas: 13_119.52, minimumTakeoverBidAtlas: 14_431.472 },
+    position,
+    5_000,
+  );
   assert.equal(normal.kind, 'ready');
-  if (normal.kind === 'ready') assert.equal(normal.bidAtlas, 12.5);
+  if (normal.kind === 'ready') assert.equal(normal.bidAtlas, 14_500);
 
-  const capped = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 17, minimumTakeoverBidAtlas: 17.001 }, position, 5_000);
-  assert.equal(capped.kind, 'ready');
-  if (capped.kind === 'ready') assert.equal(capped.bidAtlas, 20);
+  const exactHundred = planLcfsReservation(
+    realisticEntry,
+    { ...snapshot, reservationBidAtlas: 10_000, minimumTakeoverBidAtlas: 11_000 },
+    position,
+    5_000,
+  );
+  assert.equal(exactHundred.kind, 'ready');
+  if (exactHundred.kind === 'ready') assert.equal(exactHundred.bidAtlas, 11_000);
 
-  const blocked = planLcfsReservation(entry, { ...snapshot, reservationBidAtlas: 19, minimumTakeoverBidAtlas: 19.001 }, position, 5_000);
+  const blocked = planLcfsReservation(
+    realisticEntry,
+    { ...snapshot, reservationBidAtlas: 18_181.82, minimumTakeoverBidAtlas: 19_999.999 },
+    position,
+    5_000,
+  );
   assert.equal(blocked.kind, 'blocked');
-  if (blocked.kind === 'blocked') assert.match(blocked.detail, /110%/);
+  if (blocked.kind === 'blocked') assert.match(blocked.detail, /rounded 110%.*maximum 20000/i);
 });
 
 test('legacy watch rows default LCFS off and explicit values round-trip', () => {
@@ -74,10 +90,16 @@ test('legacy watch rows default LCFS off and explicit values round-trip', () => 
 
 test('LCFS is strictly opt-in and allows equality at both maximums', () => {
   assert.equal(evaluateLcfsEligibility({ ...entry, lcfs: false }, snapshot, position, 5, 5_000).kind, 'blocked');
-  const decision = evaluateLcfsEligibility(entry, snapshot, position, 5, 5_000);
+  const decision = evaluateLcfsEligibility(
+    { ...entry, maximumReservationBidAtlas: 20_000 },
+    { ...snapshot, reservationBidAtlas: 18_000, minimumTakeoverBidAtlas: 20_000 },
+    position,
+    5,
+    5_000,
+  );
   assert.equal(decision.kind, 'ready');
   if (decision.kind === 'ready') {
-    assert.equal(decision.plan.bidAtlas, 20);
+    assert.equal(decision.plan.bidAtlas, 20_000);
     assert.equal(decision.executeAtMs, 5_000);
   }
 });
@@ -97,13 +119,13 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
   const waits: number[] = [];
   const preparedBids: number[] = [];
   const sentCandidates: string[] = [];
-  const changed = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'NewDefender', reservationBidAtlas: 12, minimumTakeoverBidAtlas: 12.001 };
+  const changed = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'NewDefender', reservationBidAtlas: 12_000, minimumTakeoverBidAtlas: 13_200 };
   const snapshots = [
-    { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10, minimumTakeoverBidAtlas: 10.001 },
+    { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10_000, minimumTakeoverBidAtlas: 11_000 },
     changed,
     changed,
   ];
-  const result = await executeLcfsAttempt(entry, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
+  const result = await executeLcfsAttempt({ ...entry, maximumReservationBidAtlas: 20_000 }, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
     now: () => nowMs,
     waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
     fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
@@ -113,7 +135,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
   }, 100_000);
   assert.equal(result.kind, 'submitted');
   assert.deepEqual(waits, [70_000, 90_000, 93_000, 95_000]);
-  assert.deepEqual(preparedBids, [12.5, 15]);
+  assert.deepEqual(preparedBids, [11_000, 13_200]);
   assert.deepEqual(sentCandidates, ['candidate-2']);
 });
 

@@ -47,15 +47,24 @@ function psQuote(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-function buildWindowsPortableUpdateScript({ parentPid, targetPath, stagedPath, backupPath, readyPath, token, instance }) {
-  if (!Number.isSafeInteger(parentPid) || parentPid <= 0) throw new Error('A valid updater parent PID is required.');
+function buildWindowsPortableUpdateScript({ appPid, portablePid, targetPath, stagedPath, backupPath, readyPath, logPath, token, instance }) {
+  if (!Number.isSafeInteger(appPid) || appPid <= 0) throw new Error('A valid updater application PID is required.');
+  if (!Number.isSafeInteger(portablePid) || portablePid <= 0) throw new Error('A valid portable wrapper PID is required.');
   return `$ErrorActionPreference = 'Stop'
 $TargetPath = ${psQuote(targetPath)}
 $StagedPath = ${psQuote(stagedPath)}
 $BackupPath = ${psQuote(backupPath)}
 $ReadyPath = ${psQuote(readyPath)}
+$LogPath = ${psQuote(logPath)}
 $Token = ${psQuote(token)}
 $Instance = ${psQuote(instance)}
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    $Timestamp = [DateTimeOffset]::Now.ToString('o')
+    Add-Content -LiteralPath $LogPath -Value ("$Timestamp $Message") -Encoding UTF8 -ErrorAction Stop
+  } catch {}
+}
 
 function Start-FleetRentalBot([bool]$ReadinessCheck) {
   $Arguments = @('--instance', $Instance)
@@ -94,12 +103,18 @@ function Restore-PreviousVersion {
 }
 
 try {
-  if (-not (Wait-ForExit ${parentPid} 180)) { throw 'The running application did not exit for the update.' }
+  Write-UpdateLog 'waiting-for-app-exit'
+  if (-not (Wait-ForExit ${appPid} 180)) { throw 'The running application did not exit for the update.' }
+  Write-UpdateLog 'waiting-for-portable-wrapper-exit'
+  if (-not (Wait-ForExit ${portablePid} 180)) { throw 'The portable wrapper did not exit for the update.' }
   if (Test-Path -LiteralPath $ReadyPath) { Remove-Item -LiteralPath $ReadyPath -Force }
   if (Test-Path -LiteralPath $BackupPath) { Remove-Item -LiteralPath $BackupPath -Force }
+  Write-UpdateLog 'installing-replacement'
   Move-WithRetry $TargetPath $BackupPath 60
   Move-WithRetry $StagedPath $TargetPath 30
+  Write-UpdateLog 'replacement-installed'
   $UpdatedProcess = Start-FleetRentalBot $true
+  Write-UpdateLog ("updated-process-started pid=" + $UpdatedProcess.Id)
   $Ready = $false
   for ($Attempt = 0; $Attempt -lt 90; $Attempt++) {
     Start-Sleep -Seconds 1
@@ -112,14 +127,19 @@ try {
     }
   }
   if (-not $Ready) { throw 'The updated application did not confirm readiness.' }
+  Write-UpdateLog 'readiness-confirmed'
   Remove-Item -LiteralPath $BackupPath -Force
   Remove-Item -LiteralPath $ReadyPath -Force -ErrorAction SilentlyContinue
+  Write-UpdateLog 'update-complete'
 } catch {
+  Write-UpdateLog ("update-failed " + $_.Exception.ToString())
+  Write-UpdateLog 'rollback-started'
   if ($UpdatedProcess -and -not $UpdatedProcess.HasExited) {
     Stop-Process -Id $UpdatedProcess.Id -Force -ErrorAction SilentlyContinue
     Wait-ForExit $UpdatedProcess.Id 30 | Out-Null
   }
   Restore-PreviousVersion
+  Write-UpdateLog 'rollback-finished'
   throw
 }
 `;

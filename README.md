@@ -17,7 +17,10 @@ Missing, rejected, unreadable, or temporarily unverifiable access blocks functio
 cancels LCFS timers. The key is revalidated every five minutes and during LCFS preparation.
 
 Helius Sender settings include enable/disable, transaction priority fee in microLamports/CU,
-Sender tip in SOL, and the LCFS lead time (five seconds by default). Every data column can be shown or hidden from the left sidebar. The default-visible **Ending In** column shows the active rental countdown as whole days and hours, and **LCFS** is also visible by default. A fleet row is eligible
+Sender tip in SOL, and the LCFS lead time (five seconds by default). The RPC Usage view records
+actual wire attempts in the shared database and reports UTC-day totals by instance, safe RPC
+method name, provider, and retry count without storing URLs, keys, parameters, wallets, or
+transaction payloads. Every data column can be shown or hidden from the left sidebar. The default-visible **Ending In** column shows the active rental countdown as whole days and hours, and **LCFS** is also visible by default. A fleet row is eligible
 only when its LCFS checkbox is on. At the send time the contract is fetched again; the bot
 submits exactly one current Next bid only when rental rate/day and Next bid are each less than
 or equal to that row's configured maximum. Attempt state is persisted before submission to

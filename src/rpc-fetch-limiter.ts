@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { deferNormalRpcUntil, deferRpcUntil, tryClaimRpcSlot } from './fleet-database.js';
+import { deferNormalRpcUntil, deferRpcUntil, recordRpcUsageAttempt, tryClaimRpcSlot } from './fleet-database.js';
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -26,6 +26,19 @@ function rpcMethod(init?: RequestInit): string | null {
   }
 }
 
+function safeRpcMethod(method: string): string {
+  return /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(method) ? method : 'unknown';
+}
+
+function rpcProvider(input: RequestInfo | URL): string {
+  try {
+    const value = input instanceof Request ? input.url : String(input);
+    return new URL(value).hostname === 'sender.helius-rpc.com' ? 'Helius Sender' : 'Direct RPC';
+  } catch {
+    return 'Direct RPC';
+  }
+}
+
 function retryAfterMs(response: Response, nowMs: number): number | null {
   const value = response.headers.get('retry-after');
   if (!value) return null;
@@ -37,6 +50,7 @@ function retryAfterMs(response: Response, nowMs: number): number | null {
 
 export function createLimitedRpcFetch(
   databasePath: string,
+  instance: string,
   fetchImplementation: FetchImplementation = globalThis.fetch.bind(globalThis),
   dependencies: LimitedFetchDependencies = {},
 ): FetchImplementation {
@@ -45,8 +59,10 @@ export function createLimitedRpcFetch(
   const maxReadAttempts = dependencies.maxReadAttempts ?? 3;
 
   return async (input, init) => {
-    const method = rpcMethod(init);
-    if (!method) return fetchImplementation(input, init);
+    const parsedMethod = rpcMethod(init);
+    if (!parsedMethod) return fetchImplementation(input, init);
+    const method = safeRpcMethod(parsedMethod);
+    const provider = rpcProvider(input);
     const mayRetry = method !== 'sendTransaction';
     const attempts = mayRetry ? maxReadAttempts : 1;
     let response: Response | null = null;
@@ -57,7 +73,13 @@ export function createLimitedRpcFetch(
         if (claim.claimed) break;
         await sleep(Math.max(1, claim.waitMs));
       }
-      response = await fetchImplementation(input, init);
+      const responsePromise = fetchImplementation(input, init);
+      try {
+        recordRpcUsageAttempt(databasePath, instance, method, provider, attempt > 0, now());
+      } catch {
+        // Usage telemetry must never change RPC behavior after a wire attempt starts.
+      }
+      response = await responsePromise;
       if (response.status !== 429) return response;
 
       const delayMs = retryAfterMs(response, now()) ?? Math.min(30_000, 1_000 * (2 ** attempt));
@@ -71,9 +93,9 @@ export function createLimitedRpcFetch(
 
 const INSTALLATION_MARK = Symbol.for('fleet-rental-bot-2.rpc-fetch-limiter');
 
-export function installLimitedRpcFetch(databasePath: string): void {
+export function installLimitedRpcFetch(databasePath: string, instance: string): void {
   const state = globalThis as typeof globalThis & { [INSTALLATION_MARK]?: boolean };
   if (state[INSTALLATION_MARK]) return;
-  globalThis.fetch = createLimitedRpcFetch(databasePath, globalThis.fetch.bind(globalThis));
+  globalThis.fetch = createLimitedRpcFetch(databasePath, instance, globalThis.fetch.bind(globalThis));
   state[INSTALLATION_MARK] = true;
 }

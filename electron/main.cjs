@@ -558,15 +558,13 @@ ipcMain.handle('profile:faction', async () => {
 ipcMain.handle('rpc-limiter:status', async () => {
   await requireAephiaAccess();
   const { getRpcRequestsPerSecond } = await domainModule('fleet-database');
-  return {
-    stateFile: sharedDatabasePath(),
-    enabled: true,
-    activeUrl: 'Dedicated Fleet Rental Bot 2 RPC pacing',
-    mainUrl: '',
-    fallbackUrl: '',
-    requestsPerSecond: getRpcRequestsPerSecond(sharedDatabasePath()),
-    updatedAt: '',
-  };
+  return { requestsPerSecond: getRpcRequestsPerSecond(sharedDatabasePath()) };
+});
+
+ipcMain.handle('rpc-usage:day', async (_event, utcDate) => {
+  await requireAephiaAccess();
+  const { readRpcUsageDay } = await domainModule('fleet-database');
+  return readRpcUsageDay(sharedDatabasePath(), String(utcDate || ''));
 });
 
 ipcMain.handle('refresh:next-delay', async (_event, endTimes) => {
@@ -649,7 +647,7 @@ if (!hasSingleInstanceLock) {
   });
   app.whenReady().then(async () => {
     const { installLimitedRpcFetch } = await domainModule('rpc-fetch-limiter');
-    installLimitedRpcFetch(sharedDatabasePath());
+    installLimitedRpcFetch(sharedDatabasePath(), INSTANCE.instance);
     createWindow();
     aephiaValidationTimer = setInterval(() => {
       void validateStoredAephiaAccess(true).catch(() => clearLcfsTimers());

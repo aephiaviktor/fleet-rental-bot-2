@@ -135,7 +135,7 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(preload, /access:unlock/);
   assert.match(access, /https:\/\/api\.aephia\.com\/token\/validate/);
   assert.match(main, /requireAephiaAccess/);
-  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate']) {
+  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'rpc-usage:day', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate']) {
     const start = main.indexOf(`ipcMain.handle('${channel}'`);
     assert.notEqual(start, -1, `${channel} handler must exist`);
     assert.match(main.slice(start, start + 220), /await requireAephiaAccess\(\)/, `${channel} must fail closed behind Aephia access`);
@@ -143,4 +143,25 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(main, /Aephia API key required/);
   assert.match(main, /Aephia API key validation required/);
   assert.match(main, /clearLcfsTimers/);
+});
+
+test('RPC Usage shows request telemetry instead of limiter settings', async () => {
+  const [html, renderer, preload, main] = await Promise.all([
+    readFile('ui/index.html', 'utf8'),
+    readFile('ui/app.js', 'utf8'),
+    readFile('electron/preload.cjs', 'utf8'),
+    readFile('electron/main.cjs', 'utf8'),
+  ]);
+  assert.match(html, /id="rpc-usage-date"/);
+  assert.match(html, /id="rpc-usage-instance"/);
+  assert.match(html, /id="rpc-usage-method"/);
+  assert.match(html, /UTC-day total/);
+  assert.match(html, /Filtered subtotal/);
+  assert.match(html, /<th>Method<\/th><th>Requests<\/th><th>Day share<\/th><th>Retries<\/th><th>Instance \/ provider<\/th>/);
+  assert.doesNotMatch(html, /id="rpc-status"|id="rpc-rate"|id="rpc-state-file"/);
+  assert.match(renderer, /getRpcUsageDay\(utcDate\)/);
+  assert.match(renderer, /row\.instance===instance/);
+  assert.match(renderer, /row\.method===method/);
+  assert.match(preload, /getRpcUsageDay: \(utcDate\) => ipcRenderer\.invoke\('rpc-usage:day', utcDate\)/);
+  assert.match(main, /ipcMain\.handle\('rpc-usage:day'/);
 });

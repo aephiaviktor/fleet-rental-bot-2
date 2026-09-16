@@ -38,6 +38,16 @@ function openDatabase(databasePath: string): DatabaseSync {
       blocked_until_ms INTEGER NOT NULL,
       priority_until_ms INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS rpc_usage_daily (
+      utc_date TEXT NOT NULL,
+      instance TEXT NOT NULL,
+      method TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      request_count INTEGER NOT NULL,
+      retry_count INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (utc_date, instance, method, provider)
+    );
     INSERT OR IGNORE INTO rpc_limiter_config (singleton, requests_per_second)
       VALUES (1, ${DEFAULT_RPC_REQUESTS_PER_SECOND});
     INSERT OR IGNORE INTO rpc_limiter_state (singleton, next_slot_ms, blocked_until_ms, priority_until_ms)
@@ -168,6 +178,108 @@ export function deferRpcUntil(databasePath: string, blockedUntilMs: number): voi
           next_slot_ms = MAX(next_slot_ms, ?)
       WHERE singleton = 1
     `).run(blockedUntilMs, blockedUntilMs);
+  } finally {
+    database.close();
+  }
+}
+
+export interface RpcUsageRow {
+  instance: string;
+  method: string;
+  provider: string;
+  requests: number;
+  retries: number;
+}
+
+export interface RpcUsageDay {
+  utcDate: string;
+  available: boolean;
+  availableDates: string[];
+  totalRequests: number | null;
+  totalRetries: number | null;
+  rows: RpcUsageRow[];
+  lastUpdatedAt: number | null;
+}
+
+const UTC_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function validateUtcDate(value: string): string {
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  if (!UTC_DATE_PATTERN.test(value) || !Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) {
+    throw new Error('invalid UTC date');
+  }
+  return value;
+}
+
+export function recordRpcUsageAttempt(
+  databasePath: string,
+  instance: string,
+  method: string,
+  provider: string,
+  retry: boolean,
+  atMs = Date.now(),
+): void {
+  const utcDate = new Date(atMs).toISOString().slice(0, 10);
+  const database = openDatabase(databasePath);
+  try {
+    database.prepare(`
+      INSERT INTO rpc_usage_daily (
+        utc_date, instance, method, provider, request_count, retry_count, updated_at_ms
+      ) VALUES (?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT (utc_date, instance, method, provider) DO UPDATE SET
+        request_count = request_count + 1,
+        retry_count = retry_count + excluded.retry_count,
+        updated_at_ms = MAX(updated_at_ms, excluded.updated_at_ms)
+    `).run(utcDate, instance, method, provider, retry ? 1 : 0, atMs);
+  } finally {
+    database.close();
+  }
+}
+
+export function readRpcUsageDay(databasePath: string, utcDateValue: string): RpcUsageDay {
+  const utcDate = validateUtcDate(utcDateValue);
+  const database = openDatabase(databasePath);
+  try {
+    const availableDates = (database.prepare(`
+      SELECT DISTINCT utc_date FROM rpc_usage_daily ORDER BY utc_date DESC
+    `).all() as Array<{ utc_date: string }>).map((row) => row.utc_date);
+    const rows = database.prepare(`
+      SELECT instance, method, provider, request_count, retry_count
+      FROM rpc_usage_daily
+      WHERE utc_date = ?
+      ORDER BY request_count DESC, method, instance, provider
+    `).all(utcDate) as Array<{
+      instance: string;
+      method: string;
+      provider: string;
+      request_count: number;
+      retry_count: number;
+    }>;
+    if (rows.length === 0) {
+      return {
+        utcDate, available: false, availableDates, totalRequests: null,
+        totalRetries: null, rows: [], lastUpdatedAt: null,
+      };
+    }
+    const lastUpdated = database.prepare(`
+      SELECT MAX(updated_at_ms) AS updated_at_ms FROM rpc_usage_daily WHERE utc_date = ?
+    `).get(utcDate) as { updated_at_ms: number };
+    const resultRows = rows.map((row) => ({
+      instance: row.instance,
+      method: row.method,
+      provider: row.provider,
+      requests: Number(row.request_count),
+      retries: Number(row.retry_count),
+    }));
+    return {
+      utcDate,
+      available: true,
+      availableDates,
+      totalRequests: resultRows.reduce((sum, row) => sum + row.requests, 0),
+      totalRetries: resultRows.reduce((sum, row) => sum + row.retries, 0),
+      rows: resultRows,
+      lastUpdatedAt: Number(lastUpdated.updated_at_ms),
+    };
   } finally {
     database.close();
   }

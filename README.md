@@ -11,8 +11,13 @@ Electron main process, encrypted with OS-backed `safeStorage`, and never returne
 renderer after storage. The Settings-only privacy control masks the direct RPC URL by default on every
 launch; public profile, wallet, and contract addresses and fleet notes remain visible.
 
+The application fails closed behind a non-dismissible Aephia access gate. It validates the
+stored key with `GET https://api.aephia.com/token/validate`; only HTTP 204 unlocks the app.
+Missing, rejected, unreadable, or temporarily unverifiable access blocks functional IPC and
+cancels LCFS timers. The key is revalidated every five minutes and during LCFS preparation.
+
 Helius Sender settings include enable/disable, transaction priority fee in microLamports/CU,
-Sender tip in SOL, and the LCFS lead time (three seconds by default). Every data column can be shown or hidden from the left sidebar. The default-visible **Ending In** column shows the active rental countdown as whole days and hours, and **LCFS** is also visible by default. A fleet row is eligible
+Sender tip in SOL, and the LCFS lead time (five seconds by default). Every data column can be shown or hidden from the left sidebar. The default-visible **Ending In** column shows the active rental countdown as whole days and hours, and **LCFS** is also visible by default. A fleet row is eligible
 only when its LCFS checkbox is on. At the send time the contract is fetched again; the bot
 submits exactly one current Next bid only when rental rate/day and Next bid are each less than
 or equal to that row's configured maximum. Attempt state is persisted before submission to

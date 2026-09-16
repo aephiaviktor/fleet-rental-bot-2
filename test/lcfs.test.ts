@@ -119,6 +119,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
   const waits: number[] = [];
   const preparedBids: number[] = [];
   const sentCandidates: string[] = [];
+  const accessChecks: boolean[] = [];
   const changed = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'NewDefender', reservationBidAtlas: 12_000, minimumTakeoverBidAtlas: 13_200 };
   const snapshots = [
     { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10_000, minimumTakeoverBidAtlas: 11_000 },
@@ -132,11 +133,13 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
     build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
     prepareTransaction: async () => `candidate-${preparedBids.length}`,
     submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+    validateAccess: async (force = false) => { accessChecks.push(force); },
   }, 100_000);
   assert.equal(result.kind, 'submitted');
   assert.deepEqual(waits, [70_000, 90_000, 93_000, 95_000]);
   assert.deepEqual(preparedBids, [11_000, 13_200]);
   assert.deepEqual(sentCandidates, ['candidate-2']);
+  assert.deepEqual(accessChecks, [false, true, false]);
 });
 
 test('LCFS replaces SDK no-op signer identities before signing the prepared transaction', () => {

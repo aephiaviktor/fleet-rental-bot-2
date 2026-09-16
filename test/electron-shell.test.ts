@@ -113,3 +113,34 @@ test('watchlist writes are exposed only through the validated IPC boundary', asy
   assert.match(preload, /getPlayerFaction/);
   assert.match(main, /profile:faction/);
 });
+
+test('Aephia access is a non-dismissible fail-closed application gate', async () => {
+  const [html, styles, renderer, preload, main, access] = await Promise.all([
+    readFile('ui/index.html', 'utf8'),
+    readFile('ui/styles.css', 'utf8'),
+    readFile('ui/app.js', 'utf8'),
+    readFile('electron/preload.cjs', 'utf8'),
+    readFile('electron/main.cjs', 'utf8'),
+    readFile('src/aephia-access.ts', 'utf8'),
+  ]);
+  assert.match(html, /id="aephia-access-gate"/);
+  assert.match(html, /First, enter your Aephia API key/);
+  assert.match(html, /id="aephia-unlock-key"/);
+  assert.doesNotMatch(html.match(/id="aephia-access-gate"[\s\S]*?<\/form>/)?.[0] ?? '', /RPC URL/i);
+  assert.match(styles, /\.access-gate/);
+  assert.match(renderer, /getAephiaAccessStatus/);
+  assert.match(renderer, /verifyAephiaApiKey/);
+  assert.match(renderer, /bootUnlocked/);
+  assert.match(preload, /access:status/);
+  assert.match(preload, /access:unlock/);
+  assert.match(access, /https:\/\/api\.aephia\.com\/token\/validate/);
+  assert.match(main, /requireAephiaAccess/);
+  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate']) {
+    const start = main.indexOf(`ipcMain.handle('${channel}'`);
+    assert.notEqual(start, -1, `${channel} handler must exist`);
+    assert.match(main.slice(start, start + 220), /await requireAephiaAccess\(\)/, `${channel} must fail closed behind Aephia access`);
+  }
+  assert.match(main, /Aephia API key required/);
+  assert.match(main, /Aephia API key validation required/);
+  assert.match(main, /clearLcfsTimers/);
+});

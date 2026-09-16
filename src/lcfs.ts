@@ -56,6 +56,7 @@ export interface LcfsDependencies {
   submitPrepared?: (wireTransaction: string) => Promise<string>;
   now?: () => number;
   waitUntil?: (targetMs: number) => Promise<void>;
+  validateAccess?: (force?: boolean) => Promise<unknown>;
 }
 
 export function lcfsAttemptKey(entryId: string, activeRentalEndsAtMs: number): string {
@@ -209,20 +210,24 @@ export async function executeLcfsAttempt(
     if (now() < targetMs) await waitUntil(targetMs);
   };
   const schedule = lcfsSchedule(expectedActiveRentalEndsAtMs, settings.lcfsLeadTimeSeconds);
+  const validateAccess = dependencies.validateAccess ?? (async () => undefined);
 
   await waitForPhase(schedule.prepareAtMs);
+  await validateAccess(false);
   let candidate = await prepareOrRefreshCandidate(
     null, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
   );
   if ('kind' in candidate) return candidate;
 
   await waitForPhase(schedule.refreshAtMs);
+  await validateAccess(true);
   candidate = await prepareOrRefreshCandidate(
     candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
   );
   if ('kind' in candidate) return candidate;
 
   await waitForPhase(schedule.finalCheckAtMs);
+  await validateAccess(false);
   candidate = await prepareOrRefreshCandidate(
     candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
   );

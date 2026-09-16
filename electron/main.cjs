@@ -14,6 +14,8 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE
 let mainWindow = null;
 const lcfsTimers = new Map();
 let lcfsStateWrite = Promise.resolve();
+let aephiaAccessState = { status: 'unknown', message: 'Aephia API key validation required.', checkedAt: 0, tokenKey: '' };
+let aephiaValidationTimer = null;
 const LATEST_RELEASE_URL = 'https://api.github.com/repos/aephiaviktor/fleet-rental-bot-2/releases/latest';
 
 async function domainModule(name) {
@@ -212,15 +214,25 @@ function emitLcfsStatus(entryId, status, detail) {
   if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('lcfs:status', { entryId, status, detail });
 }
 
+function clearLcfsTimers() {
+  for (const timer of lcfsTimers.values()) clearTimeout(timer);
+  lcfsTimers.clear();
+}
+
 async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntryIds = null) {
   const [{ evaluateLcfsEligibility, executeLcfsAttempt, lcfsAttemptKey }, state] = await Promise.all([
     domainModule('lcfs'), readLcfsState(),
   ]);
   const attempted = new Set(state.attempts.map((attempt) => attempt.key));
   const eligibleKeys = new Set();
+  try {
+    await requireAephiaAccess();
+  } catch {
+    clearLcfsTimers();
+    return;
+  }
   if (!settings.useHeliusSender || !settings.hotWalletSecret) {
-    for (const timer of lcfsTimers.values()) clearTimeout(timer);
-    lcfsTimers.clear();
+    clearLcfsTimers();
     return;
   }
   const nowMs = Date.now();
@@ -237,6 +249,7 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
     if (delay > 2_147_000_000) continue;
     const timer = setTimeout(async () => {
       try {
+        await requireAephiaAccess(true);
         if (!await recordLcfsAttempt(key, 'started')) return;
         emitLcfsStatus(entry.id, 'sending', 'Preparing LCFS bid and monitoring live reservation state');
         const [latestWatchlist, latestSettings] = await Promise.all([
@@ -247,7 +260,9 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
         if (latestEntry.contractAddress !== entry.contractAddress) throw new Error('Rental contract changed after this LCFS attempt was scheduled');
         const { withUrgentRpcPriority } = await domainModule('rpc-fetch-limiter');
         const outcome = await withUrgentRpcPriority(sharedDatabasePath(), () => executeLcfsAttempt(
-          latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {}, decision.plan.activeRentalEndsAtMs,
+          latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {
+            validateAccess: (force = false) => requireAephiaAccess(force),
+          }, decision.plan.activeRentalEndsAtMs,
         ));
         if (outcome.kind === 'submitted') {
           await recordLcfsAttempt(key, 'submitted', outcome.signature);
@@ -317,6 +332,62 @@ async function loadSettingsWithSecrets() {
   return { ...settings, aephiaApiKey, hotWalletSecret: await readSecureValue('hotWalletSecret') };
 }
 
+function aephiaTokenKey(token) {
+  return token ? crypto.createHash('sha256').update(token).digest('hex') : '';
+}
+
+function publicAephiaAccessState() {
+  const { tokenKey: _tokenKey, ...state } = aephiaAccessState;
+  return state;
+}
+
+function emitAephiaAccessState() {
+  if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('access:status', publicAephiaAccessState());
+}
+
+async function validateAephiaAccessToken(token, force = false) {
+  const normalized = String(token || '').trim();
+  const tokenKey = aephiaTokenKey(normalized);
+  const { AEPHIA_VALIDATION_TTL_MS, isFreshValidAephiaAccess, validateAephiaApiKey } = await domainModule('aephia-access');
+  if (!force && tokenKey && tokenKey === aephiaAccessState.tokenKey
+      && isFreshValidAephiaAccess(aephiaAccessState, Date.now(), AEPHIA_VALIDATION_TTL_MS)) {
+    return aephiaAccessState;
+  }
+  aephiaAccessState = {
+    status: 'checking', message: 'Checking Aephia API key…', checkedAt: Date.now(), tokenKey,
+  };
+  emitAephiaAccessState();
+  const result = await validateAephiaApiKey(normalized);
+  aephiaAccessState = { ...result, tokenKey };
+  if (result.status !== 'valid') clearLcfsTimers();
+  emitAephiaAccessState();
+  return aephiaAccessState;
+}
+
+async function validateStoredAephiaAccess(force = false) {
+  try {
+    const settings = await loadSettingsWithSecrets();
+    return validateAephiaAccessToken(settings.aephiaApiKey, force);
+  } catch {
+    aephiaAccessState = {
+      status: 'temporary_error',
+      message: 'Stored Aephia access could not be read securely.',
+      checkedAt: Date.now(),
+      tokenKey: '',
+    };
+    clearLcfsTimers();
+    emitAephiaAccessState();
+    return aephiaAccessState;
+  }
+}
+
+async function requireAephiaAccess(force = false) {
+  const state = await validateStoredAephiaAccess(force);
+  if (state.status === 'missing') throw new Error('Aephia API key required.');
+  if (state.status !== 'valid') throw new Error(`Aephia API key validation required. ${state.message}`);
+  return state;
+}
+
 async function loadRuntimeSettings() {
   const { getRpcRequestsPerSecond } = await domainModule('fleet-database');
   const settings = await loadSettingsWithSecrets();
@@ -366,7 +437,33 @@ ipcMain.handle('app:get-bootstrap', async () => ({
   instance: INSTANCE.instance,
 }));
 
+ipcMain.handle('access:status', async () => {
+  await validateStoredAephiaAccess(true);
+  return publicAephiaAccessState();
+});
+
+ipcMain.handle('access:unlock', async (event, apiKey) => {
+  requireTrustedUpdaterRenderer(event);
+  const token = String(apiKey || '').trim();
+  const state = await validateAephiaAccessToken(token, true);
+  if (state.status !== 'valid') return publicAephiaAccessState();
+  try {
+    await writeSecureValues({ aephiaApiKey: token });
+  } catch {
+    aephiaAccessState = {
+      status: 'temporary_error',
+      message: 'The verified Aephia API key could not be stored securely.',
+      checkedAt: Date.now(),
+      tokenKey: '',
+    };
+    clearLcfsTimers();
+    emitAephiaAccessState();
+  }
+  return publicAephiaAccessState();
+});
+
 ipcMain.handle('watchlist:load', async () => {
+  await requireAephiaAccess();
   const [{ loadWatchlist }, { COLUMN_DEFINITIONS }] = await Promise.all([
     domainModule('watchlist-store'),
     domainModule('columns'),
@@ -375,6 +472,7 @@ ipcMain.handle('watchlist:load', async () => {
 });
 
 ipcMain.handle('watchlist:cached', async () => {
+  await requireAephiaAccess();
   const [{ loadWatchlist }, { loadCachedRows }] = await Promise.all([
     domainModule('watchlist-store'), domainModule('fleet-database'),
   ]);
@@ -393,12 +491,14 @@ ipcMain.handle('watchlist:cached', async () => {
 });
 
 ipcMain.handle('watchlist:save', async (_event, document) => {
+  await requireAephiaAccess();
   const { saveWatchlist } = await domainModule('watchlist-store');
   await saveWatchlist(watchlistPath(), document);
   return { ok: true };
 });
 
 ipcMain.handle('settings:load', async () => {
+  await requireAephiaAccess();
   const [{ getRpcRequestsPerSecond }, settings] = await Promise.all([
     domainModule('fleet-database'), loadSettingsWithSecrets(),
   ]);
@@ -414,6 +514,7 @@ ipcMain.handle('settings:load', async () => {
 });
 
 ipcMain.handle('settings:save', async (_event, settings) => {
+  await requireAephiaAccess();
   const [{ saveSettings }, { setRpcRequestsPerSecond }] = await Promise.all([
     domainModule('settings-store'), domainModule('fleet-database'),
   ]);
@@ -421,6 +522,10 @@ ipcMain.handle('settings:save', async (_event, settings) => {
   const replacementKey = String(settings?.aephiaApiKey || '').trim();
   const replacementWallet = String(settings?.hotWalletSecret || '').trim();
   const nextWallet = replacementWallet || current.hotWalletSecret;
+  if (replacementKey) {
+    const access = await validateAephiaAccessToken(replacementKey, true);
+    if (access.status !== 'valid') throw new Error(access.message);
+  }
   if (replacementWallet) getHotWalletAddressFromSecret(replacementWallet);
   const replacements = {};
   if (replacementKey) replacements.aephiaApiKey = replacementKey;
@@ -434,6 +539,7 @@ ipcMain.handle('settings:save', async (_event, settings) => {
 });
 
 ipcMain.handle('settings:remove-hot-wallet', async () => {
+  await requireAephiaAccess();
   const { saveSettings } = await domainModule('settings-store');
   const current = await loadSettingsWithSecrets();
   await saveSettings(settingsPath(), { ...current, aephiaApiKey: '', walletAddress: '' });
@@ -442,6 +548,7 @@ ipcMain.handle('settings:remove-hot-wallet', async () => {
 });
 
 ipcMain.handle('profile:faction', async () => {
+  await requireAephiaAccess();
   const settings = await loadSettingsWithSecrets();
   if (!settings.playerProfile) return { faction: null, profileFactionAddress: null };
   const { resolvePlayerFaction } = await domainModule('profile-faction');
@@ -449,6 +556,7 @@ ipcMain.handle('profile:faction', async () => {
 });
 
 ipcMain.handle('rpc-limiter:status', async () => {
+  await requireAephiaAccess();
   const { getRpcRequestsPerSecond } = await domainModule('fleet-database');
   return {
     stateFile: sharedDatabasePath(),
@@ -462,6 +570,7 @@ ipcMain.handle('rpc-limiter:status', async () => {
 });
 
 ipcMain.handle('refresh:next-delay', async (_event, endTimes) => {
+  await requireAephiaAccess();
   const { nextRefreshDelayMs } = await domainModule('refresh-schedule');
   const values = Array.isArray(endTimes)
     ? endTimes.map((value) => value === null || Number.isFinite(value) ? value : null)
@@ -470,16 +579,19 @@ ipcMain.handle('refresh:next-delay', async (_event, endTimes) => {
 });
 
 ipcMain.handle('updates:check', async (event) => {
+  await requireAephiaAccess();
   requireTrustedUpdaterRenderer(event);
   return checkForUpdates();
 });
 
 ipcMain.handle('updates:download-and-restart', async (event) => {
+  await requireAephiaAccess();
   requireTrustedUpdaterRenderer(event);
   return downloadUpdateAndRestart();
 });
 
 ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {
+  await requireAephiaAccess();
   const [{ loadWatchlist }, { refreshWatchlist, mergeRefreshWithCache }, { loadCachedRows, saveCachedRow }] = await Promise.all([
     domainModule('watchlist-store'), domainModule('live-refresh'), domainModule('fleet-database'),
   ]);
@@ -500,6 +612,7 @@ ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {
 });
 
 ipcMain.handle('reservation:review', async (_event, entryId) => {
+  await requireAephiaAccess();
   if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');
   const [{ loadWatchlist }, { prepareReservationReview }] = await Promise.all([
     domainModule('watchlist-store'), domainModule('reservation-review'),
@@ -513,6 +626,7 @@ ipcMain.handle('reservation:review', async (_event, entryId) => {
 });
 
 ipcMain.handle('reservation:simulate', async (_event, entryId) => {
+  await requireAephiaAccess();
   if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');
   const [{ loadWatchlist }, { simulateReservation }] = await Promise.all([
     domainModule('watchlist-store'), domainModule('reservation-simulation'),
@@ -537,14 +651,19 @@ if (!hasSingleInstanceLock) {
     const { installLimitedRpcFetch } = await domainModule('rpc-fetch-limiter');
     installLimitedRpcFetch(sharedDatabasePath());
     createWindow();
+    aephiaValidationTimer = setInterval(() => {
+      void validateStoredAephiaAccess(true).catch(() => clearLcfsTimers());
+    }, 5 * 60 * 1_000);
+    aephiaValidationTimer.unref();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
   app.on('window-all-closed', () => {
-    for (const timer of lcfsTimers.values()) clearTimeout(timer);
-    lcfsTimers.clear();
+    clearLcfsTimers();
+    if (aephiaValidationTimer) clearInterval(aephiaValidationTimer);
+    aephiaValidationTimer = null;
     if (process.platform !== 'darwin') app.quit();
   });
 }

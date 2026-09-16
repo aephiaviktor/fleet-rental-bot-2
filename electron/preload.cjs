@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('fleetRentalBot', {
   getBootstrap: () => ipcRenderer.invoke('app:get-bootstrap'),
+  getAephiaAccessStatus: () => ipcRenderer.invoke('access:status'),
+  verifyAephiaApiKey: (apiKey) => ipcRenderer.invoke('access:unlock', apiKey),
   loadWatchlist: () => ipcRenderer.invoke('watchlist:load'),
   saveWatchlist: (document) => ipcRenderer.invoke('watchlist:save', document),
   loadSettings: () => ipcRenderer.invoke('settings:load'),
@@ -22,4 +24,5 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   prepareReservationReview: (entryId) => ipcRenderer.invoke('reservation:review', entryId),
   simulateReservation: (entryId) => ipcRenderer.invoke('reservation:simulate', entryId),
   onLcfsStatus: (listener) => ipcRenderer.on('lcfs:status', (_event, status) => listener(status)),
+  onAephiaAccessStatus: (listener) => ipcRenderer.on('access:status', (_event, status) => listener(status)),
 });

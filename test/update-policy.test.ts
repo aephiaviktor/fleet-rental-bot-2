@@ -91,5 +91,11 @@ test('persists updater phase and exception evidence to a durable helper log', as
   const main = await readFile(new URL('../../electron/main.cjs', import.meta.url), 'utf8');
   assert.match(main, /path\.join\(targetDirectory, 'fleet-rental-bot-2-update\.log'\)/);
   assert.match(main, /portablePid: process\.ppid/);
-  assert.match(main, /stdio: \['ignore', helperLog\.fd, helperLog\.fd\]/);
+  // The helper must be spawned detached with plain 'ignore' stdio. Redirecting
+  // the child's stdout/stderr to the app's log file handle killed the spawned
+  // PowerShell on the live host (helper never executed), so no fd may be wired
+  // into the child. The durable phase log is written by the helper itself via
+  // Add-Content to the same log path.
+  assert.match(main, /stdio: 'ignore'/);
+  assert.doesNotMatch(main, /helperLog\.fd/);
 });

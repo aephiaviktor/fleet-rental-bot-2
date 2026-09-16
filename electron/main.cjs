@@ -134,22 +134,21 @@ async function downloadUpdateAndRestart() {
       token,
       instance: INSTANCE.instance,
     }), 'utf8');
-    const helperLog = await fs.open(logPath, 'a');
-    let helper;
-    try {
-      helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
-        cwd: tempDir,
-        detached: true,
-        stdio: ['ignore', helperLog.fd, helperLog.fd],
-        windowsHide: true,
-      });
-      await new Promise((resolve, reject) => {
-        helper.once('spawn', resolve);
-        helper.once('error', reject);
-      });
-    } finally {
-      await helperLog.close();
-    }
+    // Spawn the helper detached with plain 'ignore' stdio. Redirecting stdout/stderr
+    // to the app's log file handle prevented the child from executing on the live
+    // host (the helper never ran and the app quit without a replacement). The helper
+    // writes its own phase lines to the durable log via Add-Content, so no file
+    // handle needs to be inherited.
+    const helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+      cwd: tempDir,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    await new Promise((resolve, reject) => {
+      helper.once('spawn', resolve);
+      helper.once('error', reject);
+    });
     helper.unref();
     emitUpdateProgress('restarting', `Fleet Rental Bot 2 v${latest.version} verified. Restarting…`);
     setTimeout(() => app.quit(), 250);

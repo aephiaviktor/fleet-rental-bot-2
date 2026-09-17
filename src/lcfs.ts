@@ -18,7 +18,7 @@ import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from './m
 import { deriveWalletPosition, loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
 import { planAtlasReservation, type AtlasReservationPlan } from './reservation-plan.js';
 import type { AppSettings } from './settings-store.js';
-import { ownedWalletAddresses } from './settings-store.js';
+import { resolveOwnedWalletAddresses } from './player-profile.js';
 import { buildUnsignedAtlasReservation, type UnsignedReservationInput } from './unsigned-reservation.js';
 
 const HELIUS_SENDER_ENDPOINT = 'https://sender.helius-rpc.com/fast';
@@ -52,6 +52,7 @@ interface PreparedLcfsCandidate {
 
 export interface LcfsDependencies {
   fetchBundle?: (contractAddress: string, rpcUrl: string) => Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot }>;
+  resolveOwnedWallets?: (settings: AppSettings, rpcUrl: string) => Promise<string[]>;
   build?: (input: UnsignedReservationInput) => Promise<unknown>;
   prepareTransaction?: (instructions: Instruction[], settings: AppSettings, hotWalletSecret: string) => Promise<string>;
   submitPrepared?: (wireTransaction: string) => Promise<string>;
@@ -153,12 +154,13 @@ async function inspectFreshState(
   expectedActiveRentalEndsAtMs: number,
   nowMs: number,
   fetchBundle: NonNullable<LcfsDependencies['fetchBundle']>,
+  resolveOwnedWallets: NonNullable<LcfsDependencies['resolveOwnedWallets']>,
 ): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> } | LcfsAttemptResult> {
   const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
   if (mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental changed after this LCFS attempt was scheduled' };
   }
-  const plan = planLcfsReservation(entry, mapped, deriveWalletPosition(mapped, ownedWalletAddresses(settings)), nowMs);
+  const plan = planLcfsReservation(entry, mapped, deriveWalletPosition(mapped, await resolveOwnedWallets(settings, settings.rpcUrl)), nowMs);
   if (plan.kind === 'blocked') return { kind: 'blocked', reason: plan.detail };
   return { raw, mapped, plan };
 }
@@ -193,7 +195,8 @@ async function prepareOrRefreshCandidate(
   nowMs: number,
 ): Promise<PreparedLcfsCandidate | LcfsAttemptResult> {
   const fetchBundle = dependencies.fetchBundle ?? loadBundle;
-  const inspected = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, nowMs, fetchBundle);
+  const resolveOwnedWallets = dependencies.resolveOwnedWallets ?? resolveOwnedWalletAddresses;
+  const inspected = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, nowMs, fetchBundle, resolveOwnedWallets);
   if ('kind' in inspected) return inspected;
   const fingerprint = candidateFingerprint(inspected.mapped, inspected.plan);
   if (previous?.fingerprint === fingerprint) return previous;

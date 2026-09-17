@@ -161,6 +161,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
     changed,
   ];
   const result = await executeLcfsAttempt({ ...entry, maximumReservationBidAtlas: 20_000 }, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
+    resolveOwnedWallets: async () => [],
     now: () => nowMs,
     waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
     fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
@@ -196,6 +197,7 @@ test('LCFS blocks when the re-fetched rental end no longer matches the scheduled
     'stored-secret',
     undefined,
     {
+      resolveOwnedWallets: async () => [],
       now: () => 5_000,
       waitUntil: async () => {},
       fetchBundle: async () => ({ raw: {} as never, mapped: { ...snapshot, activeRentalEndsAtMs: 9_000 } }),

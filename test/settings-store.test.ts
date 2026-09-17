@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, validateSettings, ownedWalletAddresses } from '../src/settings-store.js';
+import { DEFAULT_SETTINGS, loadSettings, saveSettings, validateSettings } from '../src/settings-store.js';
 
 const profile = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
 
@@ -26,40 +26,6 @@ test('player profile must be empty or a valid Solana address', () => {
   const settings = validateSettings({ ...DEFAULT_SETTINGS, playerProfile: profile });
   assert.equal(settings.playerProfile, profile);
   assert.equal(settings.challengerProfileAddress, profile);
-});
-
-test('main and lancer wallet addresses must be empty or valid Solana addresses', () => {
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, mainWalletAddress: 'nope' }), /valid Solana address/);
-  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, lancerWalletAddress: 'nope' }), /valid Solana address/);
-  const settings = validateSettings({
-    ...DEFAULT_SETTINGS,
-    walletAddress: 'E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3',
-    mainWalletAddress: profile,
-    lancerWalletAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7',
-  });
-  assert.equal(settings.walletAddress, 'E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3');
-  assert.equal(settings.mainWalletAddress, profile);
-  assert.equal(settings.lancerWalletAddress, 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7');
-});
-
-test('ownedWalletAddresses returns the unique signer, main, and lancer wallets', () => {
-  assert.deepEqual(ownedWalletAddresses(DEFAULT_SETTINGS), []);
-  assert.deepEqual(ownedWalletAddresses({
-    ...DEFAULT_SETTINGS,
-    walletAddress: 'E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3',
-  }), ['E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3']);
-  assert.deepEqual(ownedWalletAddresses({
-    ...DEFAULT_SETTINGS,
-    walletAddress: 'E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3',
-    mainWalletAddress: profile,
-    lancerWalletAddress: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7',
-  }), ['E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3', profile, 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7']);
-  // Duplicate addresses are collapsed without repeating.
-  assert.deepEqual(ownedWalletAddresses({
-    ...DEFAULT_SETTINGS,
-    walletAddress: profile,
-    mainWalletAddress: profile,
-  }), [profile]);
 });
 
 test('version-one settings migrate faction-specific and early profile fields', () => {

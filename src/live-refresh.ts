@@ -1,8 +1,8 @@
 import type { AppSettings } from './settings-store.js';
-import { ownedWalletAddresses } from './settings-store.js';
 import type { CachedFleetRow } from './fleet-database.js';
 import type { FleetContractSnapshot, FleetTableRow, FleetWatchEntry } from './model.js';
 import { deriveWalletPosition, loadContractSnapshot } from './protocol-snapshot.js';
+import { resolveOwnedWalletAddresses } from './player-profile.js';
 import { buildFleetTableRow } from './table-row.js';
 
 export type RefreshResult =
@@ -39,18 +39,20 @@ export async function refreshWatchlist(
   settings: AppSettings,
   loader: SnapshotLoader = loadContractSnapshot,
   nowMs = Date.now(),
+  resolveOwnedWallets: typeof resolveOwnedWalletAddresses = resolveOwnedWalletAddresses,
 ): Promise<RefreshResult[]> {
   const enabled = entries.filter((entry) => entry.enabled);
   const results: RefreshResult[] = [];
   const concurrency = 3;
   let cursor = 0;
+  const ownedWallets = await resolveOwnedWallets(settings, settings.rpcUrl);
 
   async function worker(): Promise<void> {
     while (cursor < enabled.length) {
       const entry = enabled[cursor++];
       try {
         const snapshot = await loader(entry.contractAddress, settings.rpcUrl);
-        const position = deriveWalletPosition(snapshot, ownedWalletAddresses(settings));
+        const position = deriveWalletPosition(snapshot, ownedWallets);
         results.push({ id: entry.id, ok: true, row: buildFleetTableRow(entry, snapshot, position, nowMs), source: 'live', fetchedAtMs: nowMs });
       } catch (error) {
         results.push({ id: entry.id, ok: false, error: error instanceof Error ? error.message : String(error) });

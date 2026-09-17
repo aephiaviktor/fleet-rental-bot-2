@@ -18,6 +18,7 @@ import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from './m
 import { deriveWalletPosition, loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
 import { planAtlasReservation, type AtlasReservationPlan } from './reservation-plan.js';
 import type { AppSettings } from './settings-store.js';
+import { ownedWalletAddresses } from './settings-store.js';
 import { buildUnsignedAtlasReservation, type UnsignedReservationInput } from './unsigned-reservation.js';
 
 const HELIUS_SENDER_ENDPOINT = 'https://sender.helius-rpc.com/fast';
@@ -157,7 +158,7 @@ async function inspectFreshState(
   if (mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental changed after this LCFS attempt was scheduled' };
   }
-  const plan = planLcfsReservation(entry, mapped, deriveWalletPosition(mapped, settings.walletAddress), nowMs);
+  const plan = planLcfsReservation(entry, mapped, deriveWalletPosition(mapped, ownedWalletAddresses(settings)), nowMs);
   if (plan.kind === 'blocked') return { kind: 'blocked', reason: plan.detail };
   return { raw, mapped, plan };
 }

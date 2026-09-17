@@ -18,6 +18,10 @@ export interface AppSettings {
   lcfsLeadTimeSeconds: number;
   /** Retained only to migrate early 0.1.x settings; no longer shown in the UI. */
   walletAddress: string;
+  /** Player's main (hardware/primary) wallet; treated as self by the LCFS self-defender guard. */
+  mainWalletAddress: string;
+  /** Player's lancer (permissioned) wallet; also treated as self by the LCFS self-defender guard. */
+  lancerWalletAddress: string;
   /** Retained only to keep unsigned review compatibility during migration. */
   challengerProfileAddress: string;
 }
@@ -35,6 +39,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   heliusSenderTipSol: 0.0002,
   lcfsLeadTimeSeconds: 5,
   walletAddress: '',
+  mainWalletAddress: '',
+  lancerWalletAddress: '',
   challengerProfileAddress: '',
 };
 
@@ -53,6 +59,10 @@ export function validateSettings(value: unknown): AppSettings {
   if (typeof playerProfile !== 'string') throw new Error('Player Profile must be a string');
   const walletAddress = candidate.walletAddress ?? '';
   if (typeof walletAddress !== 'string') throw new Error('Wallet address must be a string');
+  const mainWalletAddress = candidate.mainWalletAddress ?? '';
+  if (typeof mainWalletAddress !== 'string') throw new Error('Main wallet address must be a string');
+  const lancerWalletAddress = candidate.lancerWalletAddress ?? '';
+  if (typeof lancerWalletAddress !== 'string') throw new Error('Lancer wallet address must be a string');
   const rpcRequestsPerSecond = candidate.rpcRequestsPerSecond ?? 5;
   if (!Number.isFinite(rpcRequestsPerSecond) || rpcRequestsPerSecond < 1 || rpcRequestsPerSecond > 10) {
     throw new Error('Fleet Rental Bot 2 RPC rate must be between 1 and 10 requests per second');
@@ -93,8 +103,28 @@ export function validateSettings(value: unknown): AppSettings {
     heliusSenderTipSol,
     lcfsLeadTimeSeconds,
     walletAddress: walletAddress.trim() === '' ? '' : requireSolanaAddress(walletAddress, 'walletAddress'),
+    mainWalletAddress: mainWalletAddress.trim() === '' ? '' : requireSolanaAddress(mainWalletAddress, 'mainWalletAddress'),
+    lancerWalletAddress: lancerWalletAddress.trim() === '' ? '' : requireSolanaAddress(lancerWalletAddress, 'lancerWalletAddress'),
     challengerProfileAddress: normalizedProfile,
   };
+}
+
+/**
+ * Owned wallet addresses (the configured signer plus the player profile's main
+ * and lancer/permissioned wallets). The LCFS self-defender guard treats any of
+ * these as "me" when it appears as the on-chain reservation defender.
+ */
+export function ownedWalletAddresses(settings: AppSettings): string[] {
+  const seen = new Set<string>();
+  const owned: string[] = [];
+  for (const value of [settings.walletAddress, settings.mainWalletAddress, settings.lancerWalletAddress]) {
+    const normalized = value.trim();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      owned.push(normalized);
+    }
+  }
+  return owned;
 }
 
 export async function loadSettings(filePath: string): Promise<AppSettings> {

@@ -2,6 +2,7 @@ import { createSolanaRpc, type Base64EncodedWireTransaction, type Instruction } 
 import type { ContractSnapshot } from '@sly-rentals/core';
 import type { FleetContractSnapshot, FleetWatchEntry } from './model.js';
 import type { AppSettings } from './settings-store.js';
+import { ownedWalletAddresses } from './settings-store.js';
 import { deriveWalletPosition, loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
 import { planAtlasReservation, type AtlasReservationPlan } from './reservation-plan.js';
 import { buildUnsignedAtlasReservation } from './unsigned-reservation.js';
@@ -52,7 +53,7 @@ export async function simulateReservation(
     return { raw, mapped: mapContractSnapshot(raw) };
   });
   const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
-  const plan = planAtlasReservation(entry, mapped, deriveWalletPosition(mapped, settings.walletAddress), nowMs);
+  const plan = planAtlasReservation(entry, mapped, deriveWalletPosition(mapped, ownedWalletAddresses(settings)), nowMs);
   if (plan.kind === 'blocked') return { kind: 'blocked', plan };
   const built = await (dependencies.build ?? buildUnsignedAtlasReservation)({
     plan, walletAddress: settings.walletAddress, challengerProfile: settings.challengerProfileAddress,

@@ -1,4 +1,5 @@
 import type { AppSettings } from './settings-store.js';
+import { ownedWalletAddresses } from './settings-store.js';
 import type { CachedFleetRow } from './fleet-database.js';
 import type { FleetContractSnapshot, FleetTableRow, FleetWatchEntry } from './model.js';
 import { deriveWalletPosition, loadContractSnapshot } from './protocol-snapshot.js';
@@ -49,7 +50,7 @@ export async function refreshWatchlist(
       const entry = enabled[cursor++];
       try {
         const snapshot = await loader(entry.contractAddress, settings.rpcUrl);
-        const position = deriveWalletPosition(snapshot, settings.walletAddress);
+        const position = deriveWalletPosition(snapshot, ownedWalletAddresses(settings));
         results.push({ id: entry.id, ok: true, row: buildFleetTableRow(entry, snapshot, position, nowMs), source: 'live', fetchedAtMs: nowMs });
       } catch (error) {
         results.push({ id: entry.id, ok: false, error: error instanceof Error ? error.message : String(error) });

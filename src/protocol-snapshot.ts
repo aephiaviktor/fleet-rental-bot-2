@@ -65,8 +65,9 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
   };
 }
 
-export function deriveWalletPosition(snapshot: FleetContractSnapshot, walletAddress: string): WalletPosition {
-  const defending = snapshot.reservationDefender === walletAddress;
+export function deriveWalletPosition(snapshot: FleetContractSnapshot, ownedWalletAddresses: ReadonlyArray<string> | string): WalletPosition {
+  const owned = typeof ownedWalletAddresses === 'string' ? [ownedWalletAddresses] : ownedWalletAddresses;
+  const defending = snapshot.reservationDefender != null && owned.includes(snapshot.reservationDefender);
   return {
     status: defending ? 'defending' : 'none',
     atlasLocked: defending && snapshot.reservationCurrency === 'ATLAS'

@@ -2,6 +2,7 @@ import type { ContractSnapshot } from '@sly-rentals/core';
 import type { FleetContractSnapshot, FleetWatchEntry } from './model.js';
 import type { AtlasReservationPlan } from './reservation-plan.js';
 import type { AppSettings } from './settings-store.js';
+import { ownedWalletAddresses } from './settings-store.js';
 import { deriveWalletPosition, loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
 import { planAtlasReservation } from './reservation-plan.js';
 import { buildUnsignedAtlasReservation } from './unsigned-reservation.js';
@@ -60,7 +61,7 @@ export async function prepareReservationReview(
     return { raw, mapped: mapContractSnapshot(raw) };
   });
   const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
-  const position = deriveWalletPosition(mapped, settings.walletAddress);
+  const position = deriveWalletPosition(mapped, ownedWalletAddresses(settings));
   const plan = planAtlasReservation(entry, mapped, position, nowMs);
   if (plan.kind === 'blocked') return { kind: 'blocked', plan };
   const instructions = summarizeInstructions(await (dependencies.build ?? buildUnsignedAtlasReservation)({

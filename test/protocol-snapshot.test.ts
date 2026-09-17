@@ -56,6 +56,17 @@ test('derives locked ATLAS only when this wallet is the defender', () => {
   });
 });
 
+test('treats any owned player wallet (signer, main, or lancer) as the defender', () => {
+  const mapped = mapContractSnapshot(fixture());
+  // The defender 'wallet-1' is any one of the owned set.
+  assert.deepEqual(deriveWalletPosition(mapped, ['signer', 'wallet-1']), {
+    status: 'defending', atlasLocked: 25, reservedAtMs: 1_000_000,
+  });
+  assert.deepEqual(deriveWalletPosition(mapped, ['main-wallet', 'lancer-wallet', 'someone-else']), {
+    status: 'none', atlasLocked: 0, reservedAtMs: null,
+  });
+});
+
 test('preserves points reservations and does not report ATLAS as locked', () => {
   const raw = fixture();
   raw.queuedRental = { ...raw.queuedRental!, data: {

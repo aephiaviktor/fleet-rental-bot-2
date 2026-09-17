@@ -79,6 +79,40 @@ test('LCFS bids 110% rounded up to a whole hundred and never exceeds Max bid', (
   if (blocked.kind === 'blocked') assert.match(blocked.detail, /rounded 110%.*maximum 20000/i);
 });
 
+test('LCFS does not overbid its own manual reservation (self-defender guard)', () => {
+  const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
+  const defendingPosition: WalletPosition = { status: 'defending', atlasLocked: 10_000, reservedAtMs: 1_000 };
+  const defendedSnapshot = {
+    ...snapshot,
+    reservationDefender: 'my-wallet',
+    reservationBidAtlas: 10_000,
+    minimumTakeoverBidAtlas: 11_000,
+  };
+
+  // The defender is our own wallet: the reservation is already held, so LCFS
+  // must stay idle instead of bidding 110% against our own manual bid.
+  const plan = planLcfsReservation(realisticEntry, defendedSnapshot, defendingPosition, 5_000);
+  assert.equal(plan.kind, 'blocked');
+  if (plan.kind === 'blocked') assert.match(plan.detail, /already the reservation defender/i);
+
+  const decision = evaluateLcfsEligibility(realisticEntry, defendedSnapshot, defendingPosition, 5, 5_000);
+  assert.equal(decision.kind, 'blocked');
+  if (decision.kind === 'blocked') assert.match(decision.reason, /already the reservation defender/i);
+});
+
+test('LCFS still bids 110% after a real challenger outbids the bot', () => {
+  const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
+  const challengerSnapshot = {
+    ...snapshot,
+    reservationDefender: 'challenger-wallet',
+    reservationBidAtlas: 13_119.52,
+    minimumTakeoverBidAtlas: 14_431.472,
+  };
+  const plan = planLcfsReservation(realisticEntry, challengerSnapshot, position, 5_000);
+  assert.equal(plan.kind, 'ready');
+  if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 14_500);
+});
+
 test('legacy watch rows default LCFS off and explicit values round-trip', () => {
   const legacyEntry = { ...entry } as Partial<FleetWatchEntry>;
   delete legacyEntry.lcfs;

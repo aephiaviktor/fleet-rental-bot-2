@@ -90,6 +90,18 @@ export function planLcfsReservation(
   const base = planAtlasReservation(entry, snapshot, position, nowMs);
   if (base.kind === 'blocked' || snapshot.reservationBidAtlas == null) return base;
 
+  // Self-defender guard: if the on-chain reservation defender is our own wallet,
+  // we already hold the reservation. Do not overbid against our own manual bid;
+  // stay idle while defending and only bid again once a real challenger takes
+  // the top spot (which flips reservationDefender away from our wallet).
+  if (position.status === 'defending') {
+    return {
+      kind: 'blocked',
+      reason: 'self-defender',
+      detail: 'Already the reservation defender; no overbid needed while we hold the reservation',
+    };
+  }
+
   const currentBid = snapshot.reservationBidAtlas;
   const bidAtlas = roundedUpToHundredAtlas(Math.max(base.bidAtlas, roundedAtlas(currentBid * 1.1)));
   if (bidAtlas > entry.maximumReservationBidAtlas) {

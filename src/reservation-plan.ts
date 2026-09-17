@@ -9,7 +9,8 @@ export type ReservationBlockReason =
   | 'bid-limit'
   | 'no-active-rental'
   | 'stale-snapshot'
-  | 'minimum-bid-unavailable';
+  | 'minimum-bid-unavailable'
+  | 'self-defender';
 
 export type AtlasReservationPlan =
   | {

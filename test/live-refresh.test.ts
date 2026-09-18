@@ -30,6 +30,18 @@ test('refreshes enabled rows and isolates individual RPC failures', async () => 
   assert.deepEqual(results.find((result) => result.id === 'bad'), { id: 'bad', ok: false, error: 'not found' });
 });
 
+test('surfaces unknown ownership in the live row while keeping the fleet refresh successful', async () => {
+  const [result] = await refreshWatchlist(
+    [entry('fleet')],
+    DEFAULT_SETTINGS,
+    async () => ({ ...snapshot, reservationDefender: 'possibly-ours' }),
+    1_000,
+    async () => ({ status: 'unknown', addresses: ['signer'] }),
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.row.position.status, 'unknown');
+});
+
 test('uses a matching last-good cached row when a live RPC refresh fails', async () => {
   const [live] = await refreshWatchlist([entry('fleet')], DEFAULT_SETTINGS, async () => snapshot, 1_000);
   assert.equal(live.ok, true);

@@ -67,6 +67,16 @@ test('treats any owned player wallet (signer, main, or lancer) as the defender',
   });
 });
 
+test('shows unknown ownership as acquisition-first bidding unless the known signer is the defender', () => {
+  const mapped = mapContractSnapshot(fixture());
+  assert.deepEqual(deriveWalletPosition(mapped, { status: 'unknown', addresses: ['signer'] }), {
+    status: 'unknown', atlasLocked: 0, reservedAtMs: null,
+  });
+  assert.deepEqual(deriveWalletPosition(mapped, { status: 'unknown', addresses: ['wallet-1'] }), {
+    status: 'defending', atlasLocked: 25, reservedAtMs: 1_000_000,
+  });
+});
+
 test('preserves points reservations and does not report ATLAS as locked', () => {
   const raw = fixture();
   raw.queuedRental = { ...raw.queuedRental!, data: {

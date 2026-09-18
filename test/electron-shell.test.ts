@@ -59,6 +59,8 @@ test('layout follows My Star Atlas with collapsible left navigation and settings
   assert.doesNotMatch(renderer, /setInterval/);
   assert.match(renderer, /Cached —/);
   assert.match(renderer, /Estimated net value \/ day/);
+  assert.match(renderer, /UNKNOWN — BIDDING/);
+  assert.match(renderer, /Profile ownership could not be verified; acquisition-first fallback active/);
   assert.match(html, /id="add-rule-row-btn"/);
   assert.match(html, /id="rental-rules-body"/);
   assert.doesNotMatch(html, /class="settings-rail"/);

@@ -4,6 +4,7 @@ import {
   PLAYER_PROFILE_PROGRAM_ID,
   decodePlayerProfileKeys,
   resolveOwnedWalletAddresses,
+  resolveWalletOwnership,
 } from '../src/player-profile.js';
 import { DEFAULT_SETTINGS } from '../src/settings-store.js';
 
@@ -90,11 +91,25 @@ test('resolves owned wallets as signer plus all profile keys', async () => {
   assert.equal(owned.length, new Set(owned).size);
 });
 
-test('falls back to the signer wallet when the profile account is unavailable', async () => {
+test('reports unknown ownership but preserves acquisition-first signer fallback when the profile is unavailable', async () => {
   const settings = { ...DEFAULT_SETTINGS, playerProfile: mainWallet, walletAddress: signer };
   const deps = { nowMs: () => 1_000, cacheTtlMs: 0, fetchAccount: async () => null, findProfileAccounts: async () => [] };
-  const owned = await resolveOwnedWalletAddresses(settings, 'https://rpc.example', deps as never);
-  assert.deepEqual(owned, [signer]);
+  const ownership = await resolveWalletOwnership(settings, 'https://rpc.example', deps as never);
+  assert.deepEqual(ownership, { status: 'unknown', addresses: [signer] });
+  assert.deepEqual(await resolveOwnedWalletAddresses(settings, 'https://rpc.example', deps as never), [signer]);
+});
+
+test('reports resolved ownership when the configured profile account decodes successfully', async () => {
+  const settings = { ...DEFAULT_SETTINGS, playerProfile: mainWallet, walletAddress: signer };
+  const deps = {
+    nowMs: () => 1_000,
+    cacheTtlMs: 0,
+    fetchAccount: async () => ({ owner: PLAYER_PROFILE_PROGRAM_ID, data: profileAccountData([mainWallet, lancerWallet]) }),
+    findProfileAccounts: async () => [],
+  };
+  const ownership = await resolveWalletOwnership(settings, 'https://rpc.example', deps as never);
+  assert.equal(ownership.status, 'resolved');
+  assert.deepEqual(ownership.addresses, [signer, mainWallet, lancerWallet]);
 });
 
 test('returns only the signer wallet when no player profile is configured', async () => {

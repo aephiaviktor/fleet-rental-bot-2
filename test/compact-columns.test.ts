@@ -16,7 +16,7 @@ const expectedShortLabels: Record<string, string> = {
   bonusIfOutbidNow: 'Bonus',
   estimatedPointsPerDay: 'Pts/d',
   estimatedPoints: 'Pts total',
-  positionStatus: 'Status',
+  positionStatus: 'Our bid',
 };
 
 test('table uses compact labels for every live column', async () => {
@@ -34,6 +34,14 @@ test('editable net value follows Days while every data column uses visibility se
   assert.match(renderer, /requestedDurationSeconds:2073600/);
   assert.doesNotMatch(renderer, /estimatedOperatingValueAtlas/);
   assert.doesNotMatch(renderer, /recommendation:'Action'/);
+});
+
+test('our-bid status sits beside current and next bid with explicit acquisition-first states', async () => {
+  const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
+  assert.match(renderer, /'reservationBid','positionStatus','minimumTakeoverBid'/);
+  assert.match(renderer, /OURS — HOLDING/);
+  assert.match(renderer, /OTHER — BIDDING/);
+  assert.match(renderer, /UNKNOWN — BIDDING/);
 });
 
 test('table renders compact headers with full header and value tooltips', async () => {

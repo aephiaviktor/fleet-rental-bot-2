@@ -14,11 +14,11 @@ import {
   type TransactionSigner,
 } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
-import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from './model.js';
+import type { FleetContractSnapshot, FleetWatchEntry, WalletOwnership, WalletPosition } from './model.js';
 import { deriveWalletPosition, loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
 import { planAtlasReservation, type AtlasReservationPlan } from './reservation-plan.js';
 import type { AppSettings } from './settings-store.js';
-import { resolveOwnedWalletAddresses } from './player-profile.js';
+import { resolveWalletOwnership } from './player-profile.js';
 import { buildUnsignedAtlasReservation, type UnsignedReservationInput } from './unsigned-reservation.js';
 
 const HELIUS_SENDER_ENDPOINT = 'https://sender.helius-rpc.com/fast';
@@ -52,7 +52,7 @@ interface PreparedLcfsCandidate {
 
 export interface LcfsDependencies {
   fetchBundle?: (contractAddress: string, rpcUrl: string) => Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot }>;
-  resolveOwnedWallets?: (settings: AppSettings, rpcUrl: string) => Promise<string[]>;
+  resolveOwnedWallets?: (settings: AppSettings, rpcUrl: string) => Promise<WalletOwnership | string[]>;
   build?: (input: UnsignedReservationInput) => Promise<unknown>;
   prepareTransaction?: (instructions: Instruction[], settings: AppSettings, hotWalletSecret: string) => Promise<string>;
   submitPrepared?: (wireTransaction: string) => Promise<string>;
@@ -195,7 +195,7 @@ async function prepareOrRefreshCandidate(
   nowMs: number,
 ): Promise<PreparedLcfsCandidate | LcfsAttemptResult> {
   const fetchBundle = dependencies.fetchBundle ?? loadBundle;
-  const resolveOwnedWallets = dependencies.resolveOwnedWallets ?? resolveOwnedWalletAddresses;
+  const resolveOwnedWallets = dependencies.resolveOwnedWallets ?? resolveWalletOwnership;
   const inspected = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, nowMs, fetchBundle, resolveOwnedWallets);
   if ('kind' in inspected) return inspected;
   const fingerprint = candidateFingerprint(inspected.mapped, inspected.plan);

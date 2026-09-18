@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import type { ContractSnapshot } from '@sly-rentals/core';
-import type { FleetContractSnapshot, WalletPosition } from './model.js';
+import type { FleetContractSnapshot, WalletOwnership, WalletPosition } from './model.js';
 
 const require = createRequire(import.meta.url);
 
@@ -65,11 +65,18 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
   };
 }
 
-export function deriveWalletPosition(snapshot: FleetContractSnapshot, ownedWalletAddresses: ReadonlyArray<string> | string): WalletPosition {
-  const owned = typeof ownedWalletAddresses === 'string' ? [ownedWalletAddresses] : ownedWalletAddresses;
+export function deriveWalletPosition(
+  snapshot: FleetContractSnapshot,
+  ownership: ReadonlyArray<string> | string | WalletOwnership,
+): WalletPosition {
+  const structured = typeof ownership === 'object' && !Array.isArray(ownership)
+    ? ownership as WalletOwnership
+    : null;
+  const owned = structured?.addresses ?? (typeof ownership === 'string' ? [ownership] : ownership as ReadonlyArray<string>);
+  const resolution = structured?.status ?? 'resolved';
   const defending = snapshot.reservationDefender != null && owned.includes(snapshot.reservationDefender);
   return {
-    status: defending ? 'defending' : 'none',
+    status: defending ? 'defending' : resolution === 'unknown' ? 'unknown' : 'none',
     atlasLocked: defending && snapshot.reservationCurrency === 'ATLAS'
       ? snapshot.reservationBidAtlas ?? 0
       : 0,

@@ -100,6 +100,20 @@ test('LCFS does not overbid its own manual reservation (self-defender guard)', (
   if (decision.kind === 'blocked') assert.match(decision.reason, /already the reservation defender/i);
 });
 
+test('LCFS keeps bidding when profile ownership is unknown', () => {
+  const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
+  const unknownPosition: WalletPosition = { status: 'unknown', atlasLocked: 0, reservedAtMs: null };
+  const unknownSnapshot = {
+    ...snapshot,
+    reservationDefender: 'possibly-ours',
+    reservationBidAtlas: 1_600,
+    minimumTakeoverBidAtlas: 1_760,
+  };
+  const decision = evaluateLcfsEligibility(realisticEntry, unknownSnapshot, unknownPosition, 5, 5_000);
+  assert.equal(decision.kind, 'ready');
+  if (decision.kind === 'ready') assert.equal(decision.plan.bidAtlas, 1_800);
+});
+
 test('LCFS still bids 110% after a real challenger outbids the bot', () => {
   const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
   const challengerSnapshot = {

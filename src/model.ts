@@ -3,7 +3,12 @@ export const ATLAS_DECIMALS = 8;
 export const POINTS_DECIMALS = 8;
 
 export type ReservationCurrency = 'ATLAS' | 'POINTS';
-export type PositionStatus = 'none' | 'defending' | 'outbid' | 'activated';
+export type PositionStatus = 'none' | 'defending' | 'unknown' | 'outbid' | 'activated';
+
+export interface WalletOwnership {
+  status: 'resolved' | 'unknown';
+  addresses: string[];
+}
 export interface FleetWatchEntry {
   id: string;
   label: string;

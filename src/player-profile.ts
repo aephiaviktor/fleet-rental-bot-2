@@ -1,4 +1,5 @@
 import { requireSolanaAddress } from './solana-address.js';
+import type { WalletOwnership } from './model.js';
 import type { AppSettings } from './settings-store.js';
 
 export const PLAYER_PROFILE_PROGRAM_ID = 'pprofELXjL5Kck7Jn5hCpwAL82DpTkSYBENzahVtbc9';
@@ -114,7 +115,7 @@ function defaultDependencies(): PlayerProfileDependencies {
   return { fetchAccount, findProfileAccounts };
 }
 
-const cacheByKey = new Map<string, { atMs: number; owned: string[] }>();
+const cacheByKey = new Map<string, { atMs: number; ownership: WalletOwnership }>();
 
 /**
  * Owned wallet addresses: the configured signer wallet plus every wallet key on
@@ -127,42 +128,58 @@ const cacheByKey = new Map<string, { atMs: number; owned: string[] }>();
  * the signer wallet. On any RPC/decoding failure the signer wallet alone is
  * returned so the guard degrades gracefully instead of throwing.
  */
-export async function resolveOwnedWalletAddresses(
+export async function resolveWalletOwnership(
   settings: AppSettings,
   rpcUrl: string,
   dependencies: PlayerProfileDependencies = defaultDependencies(),
-): Promise<string[]> {
+): Promise<WalletOwnership> {
   const signer = settings.walletAddress.trim();
   const owned = signer ? [signer] : [];
   const profile = settings.playerProfile.trim();
-  if (!profile || !rpcUrl.trim()) return owned;
+  if (!profile || !rpcUrl.trim()) return { status: 'unknown', addresses: owned };
 
   const nowMs = dependencies.nowMs ? dependencies.nowMs() : Date.now();
   const ttlMs = dependencies.cacheTtlMs ?? 60_000;
   const cacheKey = `${profile}|${rpcUrl}`;
   const cached = cacheByKey.get(cacheKey);
-  if (cached && nowMs - cached.atMs < ttlMs) return unique([...cached.owned, ...owned]);
+  if (cached && nowMs - cached.atMs < ttlMs) {
+    return { ...cached.ownership, addresses: unique([...cached.ownership.addresses, ...owned]) };
+  }
 
   let profileKeys: string[] = [];
+  let resolved = false;
   try {
     const account = await (dependencies.fetchAccount ?? defaultDependencies().fetchAccount!)(profile, rpcUrl);
     if (account && account.owner === PLAYER_PROFILE_PROGRAM_ID) {
       profileKeys = decodePlayerProfileKeys(account.data, nowMs);
+      resolved = true;
     } else {
       const accounts = await (dependencies.findProfileAccounts ?? defaultDependencies().findProfileAccounts!)(PLAYER_PROFILE_PROGRAM_ID, rpcUrl);
       for (const candidate of accounts) {
         if (candidate.owner !== PLAYER_PROFILE_PROGRAM_ID) continue;
         const keys = decodePlayerProfileKeys(candidate.data, nowMs);
-        if (signer && keys.includes(signer)) { profileKeys = keys; break; }
+        if (signer && keys.includes(signer)) { profileKeys = keys; resolved = true; break; }
       }
     }
   } catch {
-    // Fall back to the signer wallet alone; never throw from the guard path.
+    // Acquisition-first fallback: retain the known signer and explicitly mark
+    // profile ownership unknown so LCFS remains eligible within configured caps.
   }
 
-  const resolved = unique([...owned, ...profileKeys]);
-  cacheByKey.set(cacheKey, { atMs: nowMs, owned: resolved });
-  return resolved;
+  const ownership: WalletOwnership = {
+    status: resolved ? 'resolved' : 'unknown',
+    addresses: unique([...owned, ...profileKeys]),
+  };
+  cacheByKey.set(cacheKey, { atMs: nowMs, ownership });
+  return ownership;
+}
+
+export async function resolveOwnedWalletAddresses(
+  settings: AppSettings,
+  rpcUrl: string,
+  dependencies: PlayerProfileDependencies = defaultDependencies(),
+): Promise<string[]> {
+  return (await resolveWalletOwnership(settings, rpcUrl, dependencies)).addresses;
 }
 
 function unique(addresses: string[]): string[] {

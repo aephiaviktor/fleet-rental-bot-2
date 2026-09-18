@@ -73,7 +73,7 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'estimatedPoints', label: 'Estimated Points', group: 'loyalty', defaultVisible: true },
   { id: 'pointsPerThousandAtlas', label: 'Points per 1,000 ATLAS', group: 'loyalty', defaultVisible: false },
   { id: 'existingPointsBalance', label: 'Existing Points balance', group: 'loyalty', defaultVisible: false },
-  { id: 'positionStatus', label: 'Position status', group: 'decision', defaultVisible: true },
+  { id: 'positionStatus', label: 'Our bid', group: 'decision', defaultVisible: true },
 ] as const;
 
 export const DEFAULT_VISIBLE_COLUMNS: readonly ColumnId[] = COLUMN_DEFINITIONS

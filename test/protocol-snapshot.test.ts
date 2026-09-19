@@ -10,13 +10,15 @@ function fixture(): ContractSnapshot {
       pointsPerDay: 1_000_000_000n,
       captureRateBps: 10_500n,
       contestedMultiplierMaxBps: 110,
+      atlasPerPoint: 100n,
+      minCaptureThreshold: 100_000_000n,
       reservationsEnabled: true,
     } as never },
     contract: { address: 'contract' as never, data: {
-      weight: 3, reservationsDisabled: false,
+      weight: 3, reservationsDisabled: false, rate: 2_500_000_000n,
       durationMinSeconds: 3_600n, durationMaxSeconds: 8_035_200n,
     } as never },
-    activeRental: { address: 'active' as never, data: { endTime: 2_000n } as never },
+    activeRental: { address: 'active' as never, data: { startTime: 1_000n, endTime: 2_000n } as never },
     queuedRental: { address: 'queued' as never, data: {
       borrower: { toString: () => 'wallet-1' },
       bidAtlas: 2_500_000_000n,
@@ -86,6 +88,21 @@ test('preserves points reservations and does not report ATLAS as locked', () => 
   assert.equal(mapped.reservationCurrency, 'POINTS');
   assert.equal(mapped.reservationBidPoints, 4);
   assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, 0);
+});
+
+test('uses protocol 1:1 points-to-ATLAS comparison instead of the SDK 100x ratio', () => {
+  const raw = fixture();
+  raw.contract.data.rate = 149_900_000_000n;
+  raw.activeRental = { ...raw.activeRental!, data: { startTime: 0n, endTime: 2_000n } as never };
+  raw.queuedRental = { ...raw.queuedRental!, data: {
+    ...raw.queuedRental!.data, bidAtlas: 0n, bidPoints: 400_000_000_000n,
+  }};
+  raw.nowSeconds = 1_999;
+
+  const mapped = mapContractSnapshot(raw);
+  assert.equal(mapped.reservationCurrency, 'POINTS');
+  assert.equal(mapped.reservationBidPoints, 4_000);
+  assert.equal(mapped.minimumTakeoverBidAtlas, 4_399.6);
 });
 
 test('uses the legal zero bid for the first reservation with no defender', () => {

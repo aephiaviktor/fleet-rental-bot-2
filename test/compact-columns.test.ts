@@ -6,6 +6,7 @@ const expectedShortLabels: Record<string, string> = {
   rentalRate: 'Rate/d',
   rentalCost: 'Rent total',
   reservationBid: 'Bid',
+  reservationCurrency: 'Currency',
   minimumTakeoverBid: 'Next bid',
   reservationPremiumPerDay: 'Bid/d',
   allInCostPerDay: 'All-in/d',
@@ -36,9 +37,9 @@ test('editable net value follows Days while every data column uses visibility se
   assert.doesNotMatch(renderer, /recommendation:'Action'/);
 });
 
-test('our-bid status sits beside current and next bid with explicit acquisition-first states', async () => {
+test('bid currency and our-bid status sit beside current and next bid', async () => {
   const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
-  assert.match(renderer, /'reservationBid','positionStatus','minimumTakeoverBid'/);
+  assert.match(renderer, /'reservationBid','reservationCurrency','positionStatus','minimumTakeoverBid'/);
   assert.match(renderer, /OURS — HOLDING/);
   assert.match(renderer, /OTHER — BIDDING/);
   assert.match(renderer, /UNKNOWN — BIDDING/);

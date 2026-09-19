@@ -114,6 +114,23 @@ test('LCFS keeps bidding when profile ownership is unknown', () => {
   if (decision.kind === 'ready') assert.equal(decision.plan.bidAtlas, 1_800);
 });
 
+test('LCFS outbids a points reservation with ATLAS under the same 1:1 maximum', () => {
+  const plan = planLcfsReservation(
+    { ...entry, maximumReservationBidAtlas: 5_000 },
+    {
+      ...snapshot,
+      reservationCurrency: 'POINTS',
+      reservationBidAtlas: 0,
+      reservationBidPoints: 4_000,
+      minimumTakeoverBidAtlas: 4_399.6,
+    },
+    position,
+    5_000,
+  );
+  assert.equal(plan.kind, 'ready');
+  if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 4_400);
+});
+
 test('LCFS still bids 110% after a real challenger outbids the bot', () => {
   const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
   const challengerSnapshot = {
@@ -250,7 +267,7 @@ test('every displayed data column is selectable and LCFS and Ending In default v
   assert.doesNotMatch(renderer, /!c\.selectable\|\|/);
   assert.match(renderer, /S\.document\.visibleColumns\.includes\(id\)/);
   const legacy = parseWatchlist(JSON.stringify({ version: 2, entries: [entry], visibleColumns: ['comment'] }));
-  assert.equal(legacy.version, 3);
+  assert.equal(legacy.version, 4);
   assert.equal(legacy.visibleColumns.includes('lcfs'), true);
   assert.equal(legacy.visibleColumns.includes('endingIn'), true);
 });

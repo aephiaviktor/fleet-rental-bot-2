@@ -25,13 +25,22 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
   const pointsFactor = BigInt(DEFAULT_DECIMAL_FACTOR);
   const bidAtlas = queued ? decimalAmount(BigInt(queued.bidAtlas), atlasFactor) : null;
   const bidPoints = queued ? decimalAmount(BigInt(queued.bidPoints), pointsFactor) : null;
+  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  // Deployed SRSLY compares points and ATLAS at 1:1. The current SDK reads
+  // config.atlasPerPoint as a human ratio and produces a 100x takeover floor,
+  // so override that SDK interpretation until upstream is corrected.
+  const minimumBid = core.computeMinimumBidFromSnapshot(snapshot, { atlasPerPoint: 1n });
   const reservationCurrency = queued
     ? (BigInt(queued.bidAtlas) > 0n ? 'ATLAS' : 'POINTS')
     : null;
   const basePointsPerDay = decimalAmount(BigInt(config.pointsPerDay), pointsFactor);
   const fleetWeight = Number(contract.weight);
-  const defenderBid = queued ? BigInt(queued.bidAtlas) : 0n;
-  const expiryBase = snapshot.effectiveRate > defenderBid ? snapshot.effectiveRate : defenderBid;
+  const defenderBidAtlasEquivalent = queued
+    ? BigInt(queued.bidAtlas) + BigInt(queued.bidPoints) * atlasFactor / pointsFactor
+    : 0n;
+  const expiryBase = snapshot.effectiveRate > defenderBidAtlasEquivalent
+    ? snapshot.effectiveRate
+    : defenderBidAtlasEquivalent;
   const expiryRampBps = BigInt(Math.max(
     Number(config.captureRateBps),
     10_000 + Math.max(0, Number(config.contestedMultiplierMaxBps) - 100) * 100,
@@ -49,12 +58,12 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
     reservationBidAtlas: bidAtlas,
     reservationBidPoints: bidPoints,
     minimumTakeoverBidAtlas: queued
-      ? decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor)
+      ? decimalAmount(BigInt(minimumBid.atlas), atlasFactor)
       : 0,
     minimumTakeoverBidPoints: queued
-      ? decimalAmount(BigInt(snapshot.minimumBid.points), pointsFactor)
+      ? decimalAmount(BigInt(minimumBid.points), pointsFactor)
       : 0,
-    currentMinimumBidAtlas: decimalAmount(BigInt(snapshot.minimumBid.atlas), atlasFactor),
+    currentMinimumBidAtlas: decimalAmount(BigInt(minimumBid.atlas), atlasFactor),
     projectedExpiryTakeoverBidAtlas: queued
       ? decimalAmount(expiryBase * expiryRampBps / 10_000n, atlasFactor)
       : null,

@@ -55,7 +55,7 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'lcfs', label: 'Last-come-first-serve', group: 'reservation', defaultVisible: true },
   { id: 'rentalRate', label: 'Rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'rentalCost', label: 'Estimated rental cost / day (ATLAS)', group: 'economics', defaultVisible: true },
-  { id: 'reservationCurrency', label: 'Reservation currency', group: 'reservation', defaultVisible: false },
+  { id: 'reservationCurrency', label: 'Bid currency', group: 'reservation', defaultVisible: true },
   { id: 'reservationBid', label: 'Current reservation premium (ATLAS or Points)', group: 'reservation', defaultVisible: true },
   { id: 'minimumTakeoverBid', label: 'Minimum takeover premium (ATLAS)', group: 'reservation', defaultVisible: true },
   { id: 'reservationPremiumPerDay', label: 'Reservation premium / day (ATLAS)', group: 'reservation', defaultVisible: true },

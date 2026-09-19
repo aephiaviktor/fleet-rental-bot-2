@@ -5,7 +5,7 @@ import type { FleetWatchEntry } from './model.js';
 import { requireSolanaAddress } from './solana-address.js';
 
 export interface WatchlistDocument {
-  version: 3;
+  version: 4;
   entries: FleetWatchEntry[];
   visibleColumns: ColumnId[];
 }
@@ -40,7 +40,7 @@ export function validateWatchEntry(value: unknown): FleetWatchEntry {
 
 export function parseWatchlist(text: string): WatchlistDocument {
   const parsed = JSON.parse(text) as { version?: number; entries?: unknown[]; visibleColumns?: unknown };
-  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) throw new Error(`Unsupported watchlist version: ${String(parsed.version)}`);
+  if (![1, 2, 3, 4].includes(parsed.version ?? 0)) throw new Error(`Unsupported watchlist version: ${String(parsed.version)}`);
   if (!Array.isArray(parsed.entries)) throw new Error('Watchlist entries must be an array');
   const entries = parsed.entries.map(validateWatchEntry);
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('Watchlist entry IDs must be unique');
@@ -52,7 +52,8 @@ export function parseWatchlist(text: string): WatchlistDocument {
       if (!visibleColumns.includes(column)) visibleColumns.push(column);
     }
   }
-  return { version: 3, entries, visibleColumns };
+  if ((parsed.version ?? 0) <= 3 && !visibleColumns.includes('reservationCurrency')) visibleColumns.push('reservationCurrency');
+  return { version: 4, entries, visibleColumns };
 }
 
 export async function loadWatchlist(filePath: string): Promise<WatchlistDocument> {
@@ -60,7 +61,7 @@ export async function loadWatchlist(filePath: string): Promise<WatchlistDocument
     return parseWatchlist(await readFile(filePath, 'utf8'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 3, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
+      return { version: 4, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
     }
     throw error;
   }

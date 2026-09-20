@@ -102,6 +102,23 @@ function Restore-PreviousVersion {
   if (Test-Path -LiteralPath $TargetPath) { Start-FleetRentalBot $false | Out-Null }
 }
 
+# No installation or rollback is allowed until the parent authorizes shutdown.
+$HelperStarted = Join-Path (Split-Path $ReadyPath) 'helper-started.json'
+$HelperProceed = Join-Path (Split-Path $ReadyPath) 'helper-proceed.json'
+@{token=$Token} | ConvertTo-Json -Compress | Set-Content -LiteralPath $HelperStarted -Encoding UTF8
+Write-UpdateLog 'helper-started'
+$Authorized = $false
+for ($Attempt = 0; $Attempt -lt 60; $Attempt++) {
+  if (Test-Path -LiteralPath $HelperProceed) {
+    try {
+      $Permission = Get-Content -LiteralPath $HelperProceed -Raw | ConvertFrom-Json
+      if ($Permission.token -eq $Token) { $Authorized = $true; break }
+    } catch {}
+  }
+  Start-Sleep -Milliseconds 500
+}
+if (-not $Authorized) { Write-UpdateLog 'helper-not-authorized'; exit 1 }
+
 try {
   Write-UpdateLog 'waiting-for-app-exit'
   if (-not (Wait-ForExit ${appPid} 180)) { throw 'The running application did not exit for the update.' }

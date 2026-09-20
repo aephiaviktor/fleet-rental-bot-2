@@ -9,6 +9,8 @@ const { configureInstance } = require('./instance.cjs');
 const { getHotWalletAddressFromSecret } = require('./wallet-secret.cjs');
 const { buildWindowsPortableUpdateScript, compareVersions, parseLatestRelease } = require('./update-policy.cjs');
 
+const { waitForHelper, buildHelperLauncher } = require('./update-handshake.cjs');
+
 const INSTANCE = configureInstance(app, process.argv);
 const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE.instance });
 let mainWindow = null;
@@ -134,21 +136,16 @@ async function downloadUpdateAndRestart() {
       token,
       instance: INSTANCE.instance,
     }), 'utf8');
-    // Spawn the helper detached with plain 'ignore' stdio. Redirecting stdout/stderr
-    // to the app's log file handle prevented the child from executing on the live
-    // host (the helper never ran and the app quit without a replacement). The helper
-    // writes its own phase lines to the durable log via Add-Content, so no file
-    // handle needs to be inherited.
-    const helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+    // WScript creates an independent hidden console host for PowerShell.
+    const launcherPath = path.join(tempDir, 'launch-helper.vbs');
+    await fs.writeFile(launcherPath, buildHelperLauncher(scriptPath));
+    const helper = spawn('wscript.exe', ['//B', '//Nologo', launcherPath], {
       cwd: tempDir,
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
     });
-    await new Promise((resolve, reject) => {
-      helper.once('spawn', resolve);
-      helper.once('error', reject);
-    });
+    await waitForHelper(helper, tempDir, token, logPath);
     helper.unref();
     emitUpdateProgress('restarting', `Fleet Rental Bot 2 v${latest.version} verified. Restarting…`);
     setTimeout(() => app.quit(), 250);

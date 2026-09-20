@@ -91,11 +91,40 @@ test('persists updater phase and exception evidence to a durable helper log', as
   const main = await readFile(new URL('../../electron/main.cjs', import.meta.url), 'utf8');
   assert.match(main, /path\.join\(targetDirectory, 'fleet-rental-bot-2-update\.log'\)/);
   assert.match(main, /portablePid: process\.ppid/);
-  // The helper must be spawned detached with plain 'ignore' stdio. Redirecting
-  // the child's stdout/stderr to the app's log file handle killed the spawned
-  // PowerShell on the live host (helper never executed), so no fd may be wired
-  // into the child. The durable phase log is written by the helper itself via
-  // Add-Content to the same log path.
+  // WScript uses ignored stdio; the PowerShell helper owns the durable phase log.
   assert.match(main, /stdio: 'ignore'/);
   assert.doesNotMatch(main, /helperLog\.fd/);
+});
+
+test('helper acknowledges execution and requires parent authorization before touching installation', () => {
+ const script=buildWindowsPortableUpdateScript({appPid:42,portablePid:41,targetPath:'target',stagedPath:'stage',backupPath:'backup',readyPath:'ready',logPath:'log',token:'test',instance:'MUD'});
+ assert.match(script,/helper-started/);
+ assert.match(script,/helper-started\.json/);
+ assert.match(script,/helper-proceed\.json/);
+ assert.ok(script.indexOf('if (-not $Authorized)') < script.indexOf("Write-UpdateLog 'waiting-for-app-exit'"));
+});
+
+test('Windows updater uses independent WScript launcher and waits for helper acknowledgement', async () => {
+ const main=await readFile(new URL('../../electron/main.cjs',import.meta.url),'utf8');
+ assert.match(main,/spawn\('wscript.exe'/);
+ assert.doesNotMatch(main,/spawn\('powershell.exe'/);
+ assert.match(main,/await waitForHelper/);
+ assert.ok(main.indexOf('await waitForHelper') < main.indexOf('setTimeout(() => app.quit()'));
+});
+
+test('handshake authorizes only a matching helper and rejects timeout or early exit', async () => {
+ const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os'); const path=await import('node:path');
+ const {EventEmitter}=await import('node:events');
+ const {waitForHelper}=require('../../electron/update-handshake.cjs');
+ for(const scenario of ['success','wrong-token','exit']){
+  const dir=await mkdtemp(path.join(tmpdir(),'helper-test-'));
+  const helper=Object.assign(new EventEmitter(),{exitCode:scenario==='exit'?0:null,signalCode:null,killed:false,kill(){this.killed=true;}});
+  try {
+   await writeFile(path.join(dir,'helper-started.json'),'\uFEFF'+JSON.stringify({token:scenario==='wrong-token'?'wrong':'test'}));
+   const run=waitForHelper(helper,dir,'test',path.join(dir,'log'),150);
+   if(scenario==='success') {await run;assert.equal(JSON.parse(await readFile(path.join(dir,'helper-proceed.json'),'utf8')).token,'test');assert.equal(helper.killed,false);}
+   else {await assert.rejects(run,/acknowledge|exited/);assert.equal(helper.killed,true);await assert.rejects(readFile(path.join(dir,'helper-proceed.json')));}
+  }finally{await rm(dir,{recursive:true,force:true});}
+ }
 });

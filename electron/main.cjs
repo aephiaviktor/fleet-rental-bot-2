@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
-const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const { configureInstance } = require('./instance.cjs');
 const { getHotWalletAddressFromSecret } = require('./wallet-secret.cjs');
 const { buildWindowsPortableUpdateScript, compareVersions, parseLatestRelease } = require('./update-policy.cjs');
@@ -585,6 +585,36 @@ ipcMain.handle('updates:download-and-restart', async (event) => {
   await requireAephiaAccess();
   requireTrustedUpdaterRenderer(event);
   return downloadUpdateAndRestart();
+});
+
+ipcMain.handle('history:open-account', async (_event, value) => {
+  await requireAephiaAccess();
+  const { requireSolanaAddress } = await domainModule('solana-address');
+  const account = requireSolanaAddress(value, 'Explorer account');
+  await shell.openExternal(`https://solscan.io/account/${account}`);
+});
+
+const historyRefreshes = new Map();
+ipcMain.handle('history:load', async (_event, refresh = false) => {
+  await requireAephiaAccess();
+  const settings = await loadRuntimeSettings();
+  const { discoverRentals, recordRentals, readRentalHistory } = await domainModule('rental-history');
+  const file = path.join(app.getPath('userData'), 'rental-history.sqlite');
+  let error = null;
+  if (refresh && settings.playerProfile) {
+    const key = `${settings.playerProfile}:${settings.rpcUrl}`;
+    if (!historyRefreshes.has(key)) historyRefreshes.set(key, discoverRentals(settings.playerProfile, settings.rpcUrl)
+      .then(rows => recordRentals(file, settings.playerProfile, rows))
+      .finally(() => { historyRefreshes.delete(key); }));
+    try { await historyRefreshes.get(key); } catch (e) { error = e.message; }
+  }
+  const { loadCachedRows } = await domainModule('fleet-database');
+  const names = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance)
+    .map(item => [item.row.entry.contractAddress, item.row.snapshot.fleetName]));
+  return { rows: readRentalHistory(file, settings.playerProfile).map(row => ({ ...row,
+    fleetName: names.get(row.contract) || row.contract,
+    walletLabel: row.borrower === settings.walletAddress ? 'Permissioned wallet' : 'Profile wallet',
+  })), error, configured: Boolean(settings.playerProfile) };
 });
 
 ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {

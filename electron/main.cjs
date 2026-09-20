@@ -587,6 +587,12 @@ ipcMain.handle('updates:download-and-restart', async (event) => {
   return downloadUpdateAndRestart();
 });
 
+ipcMain.handle('history:open-transaction', async (_event, value) => {
+  await requireAephiaAccess();
+  if(typeof value!=='string'||! /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(value))throw new Error('Invalid transaction signature');
+  await shell.openExternal(`https://solscan.io/tx/${value}`);
+});
+
 ipcMain.handle('history:open-account', async (_event, value) => {
   await requireAephiaAccess();
   const { requireSolanaAddress } = await domainModule('solana-address');
@@ -595,25 +601,41 @@ ipcMain.handle('history:open-account', async (_event, value) => {
 });
 
 const historyRefreshes = new Map();
+const historyFleetNames = new Map();
 ipcMain.handle('history:load', async (_event, refresh = false) => {
   await requireAephiaAccess();
   const settings = await loadRuntimeSettings();
   const { discoverRentals, recordRentals, readRentalHistory } = await domainModule('rental-history');
   const file = path.join(app.getPath('userData'), 'rental-history.sqlite');
   let error = null;
+  let roles={addresses:[],main:null};
+  if(settings.playerProfile){try{roles=await (await domainModule('player-profile')).resolveHistoryWallets(settings.playerProfile,settings.rpcUrl);}catch(e){error=e.message;}}
   if (refresh && settings.playerProfile) {
     const key = `${settings.playerProfile}:${settings.rpcUrl}`;
     if (!historyRefreshes.has(key)) historyRefreshes.set(key, discoverRentals(settings.playerProfile, settings.rpcUrl)
-      .then(rows => recordRentals(file, settings.playerProfile, rows))
+      .then(async rows => {recordRentals(file, settings.playerProfile, rows);if(!roles.addresses.length)throw new Error('Profile wallets unavailable; backfill deferred');await (await domainModule('history-backfill')).backfillRentals(file,settings.playerProfile,roles.addresses,settings.rpcUrl);})
       .finally(() => { historyRefreshes.delete(key); }));
     try { await historyRefreshes.get(key); } catch (e) { error = e.message; }
   }
   const { loadCachedRows } = await domainModule('fleet-database');
   const names = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance)
     .map(item => [item.row.entry.contractAddress, item.row.snapshot.fleetName]));
-  return { rows: readRentalHistory(file, settings.playerProfile).map(row => ({ ...row,
+  const historyRows=readRentalHistory(file, settings.playerProfile);
+  for(const row of historyRows){
+    if(names.has(row.contract))continue;
+    if(!historyFleetNames.has(row.contract)){
+      try{
+        const sdk=require('@sly-rentals/core');
+        const fleetAddress=row.fleet || (await sdk.getContractSnapshot({contractAddress:row.contract,rpcUrl:settings.rpcUrl})).contract.data.fleet;
+        const fleet=await sdk.fetchFleet(fleetAddress,settings.rpcUrl);
+        historyFleetNames.set(row.contract,Buffer.from(fleet.fleetLabel).toString('utf8').replace(/\0/g,'').trim());
+      }catch{/* Deleted historical fleets fall back to the contract address. */}
+    }
+    if(historyFleetNames.get(row.contract))names.set(row.contract,historyFleetNames.get(row.contract));
+  }
+  return { rows: historyRows.map(row => ({ ...row,
     fleetName: names.get(row.contract) || row.contract,
-    walletLabel: row.borrower === settings.walletAddress ? 'Permissioned wallet' : 'Profile wallet',
+    walletLabel: row.borrower === settings.walletAddress ? 'Bot' : row.borrower===roles.main ? 'Main' : 'Other',
   })), error, configured: Boolean(settings.playerProfile) };
 });
 

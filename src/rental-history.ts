@@ -12,8 +12,8 @@ interface ObservedRental {
 }
 export interface RentalHistoryRow {
   id: string; contract: string; borrower: string; start: number; end: number;
-  rate: number; rentTotal: number; bid: number | null; currency: string | null;
-  observedAt: number; status: 'Active' | 'Completed';
+  rate: number | null; rentTotal: number | null; bid: number | null; currency: string | null;
+  fleet?: string; signature?: string; startEstimated?: boolean; observedAt: number; status: 'Active' | 'Completed';
 }
 function open(file: string) {
   mkdirSync(dirname(file), { recursive: true });
@@ -37,7 +37,10 @@ export function recordRentals(file: string, profile: string, rentals: ObservedRe
       const row = {id,contract:r.contract,borrower:r.borrower,start,end,rate,
         rentTotal:rate*(end-start)/86400000,bid:atlas>0?atlas:points>0?points:null,
         currency:atlas>0?'Atlas':points>0?'Points':null,observedAt:now};
-      put.run(profile,id,start,JSON.stringify(row));
+      const prior=db.prepare('SELECT start,payload FROM rental_history WHERE profile=? AND id=? AND ABS(start-?)<=60000').all(profile,id,start).find(x=>{const p=JSON.parse(String(x.payload));return p.borrower===r.borrower && p.startEstimated;});
+      const previous=prior?JSON.parse(String(prior.payload)):JSON.parse(String(db.prepare('SELECT payload FROM rental_history WHERE profile=? AND id=? AND start=?').get(profile,id,start)?.payload||'{}'));
+      if(prior && prior.start!==start)db.prepare('DELETE FROM rental_history WHERE profile=? AND id=? AND start=?').run(profile,id,Number(prior.start));
+      put.run(profile,id,start,JSON.stringify({...previous,...row,startEstimated:false}));
     }
   } finally { db.close(); }
 }
@@ -50,7 +53,7 @@ export function readRentalHistory(file: string, profile: string, now = Date.now(
 }
 /** Confirmed account scan filtered by profile, including manual rentals outside the watchlist.
  * Closed accounts cannot be backfilled from current state; never claim complete history.
- * Layout comes from SDK 5.4.0 generated RentalState: discriminator/u8/u8/borrower/borrowerState/profile.
+ * Layout comes from SDK 5.4.0 generated RentalState: discriminator/u32/u8/borrower/borrowerState/profile.
  */
 export async function discoverRentals(profile: string, rpcUrl: string): Promise<ObservedRental[]> {
   const core=createRequire(import.meta.url)('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
@@ -58,7 +61,7 @@ export async function discoverRentals(profile: string, rpcUrl: string): Promise<
   const accounts=await rpc.getProgramAccounts(address(NEXT_GEN_SRSLY_PROGRAM_ID), {
     encoding:'base64',commitment:'confirmed',filters:[
       {memcmp:{offset:0n,encoding:'base64',bytes:Buffer.from(core.RENTAL_STATE_DISCRIMINATOR).toString('base64') as Base64EncodedBytes}},
-      {memcmp:{offset:74n,encoding:'base58',bytes:address(profile) as unknown as Base58EncodedBytes}},
+      {memcmp:{offset:77n,encoding:'base58',bytes:address(profile) as unknown as Base58EncodedBytes}},
     ],
   }).send();
   const decoder=core.getRentalStateDecoder();

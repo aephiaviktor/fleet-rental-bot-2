@@ -38,7 +38,18 @@ test('discovery uses confirmed profile-filtered account reads, never transaction
   assert.deepEqual(await discoverRentals(profile,`http://127.0.0.1:${port}`),[]);
   assert.equal(request.method,'getProgramAccounts');
   assert.equal(request.params[1].commitment,'confirmed');
-  assert.equal(request.params[1].filters[1].memcmp.offset,74);
+  assert.equal(request.params[1].filters[1].memcmp.offset,77);
   assert.equal(request.params[1].filters[1].memcmp.bytes,profile);
  } finally {await new Promise<void>((resolve,reject)=>server.close(err=>err?reject(err):resolve()));}
+});
+test('SDK-encoded RentalState stores the borrower profile at offset 77 (u32 version)',async()=>{
+ const {createRequire}=await import('node:module');const core=createRequire(import.meta.url)('@sly-rentals/core/codama');const {getAddressEncoder,address}=await import('@solana/kit');
+ const zero=address('11111111111111111111111111111111'),profile=address('E3Lh2ScF9c9ZZjoTAeNNApFZiQV1Q6GBmvgsKLh8xkL3');
+ const encoded=core.getRentalStateEncoder().encode({version:1,bump:0,borrower:zero,borrowerState:zero,borrowerProfile:profile,contract:zero,rate:1n,lastPayment:0n,escrow:0n,startTime:1n,endTime:2n,serviceFee:0n,feeBps:0,referrer:null,discountBps:0,bidPoints:0n,bidAtlas:0n,cancelDelayMin:0n,status:2,updatedAt:0n,createdAt:0n});
+ assert.deepEqual(encoded.slice(77,109),getAddressEncoder().encode(profile));
+});
+test('account refresh merges approximate backfill without losing signature or duplicating cycle',async()=>{
+ const {DatabaseSync}=await import('node:sqlite');const dir=mkdtempSync(join(tmpdir(),'history-merge-')),file=join(dir,'history.sqlite');
+ try{readRentalHistory(file,'profile');const db=new DatabaseSync(file);db.prepare('INSERT INTO rental_history VALUES (?,?,?,?)').run('profile','rental',101000,JSON.stringify({id:'rental',contract:'contract',borrower:'wallet',start:101000,end:201000,rate:null,rentTotal:null,signature:'sig',startEstimated:true}));db.close();recordRentals(file,'profile',[rental()],150000);const rows=readRentalHistory(file,'profile',150000);assert.equal(rows.length,1);assert.equal(rows[0].start,100000);assert.equal(rows[0].signature,'sig');assert.equal(rows[0].rate,1);assert.equal(rows[0].startEstimated,false);
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });

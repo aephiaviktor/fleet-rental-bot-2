@@ -41,37 +41,29 @@ $('rental-rules-body').addEventListener('focusout',()=>setTimeout(()=>{if(S.rend
 let historyLoading=false;
 async function showRentalHistory(refresh=true,background=false){
   if(!background){
-  $('reservations-panel').hidden=true;$('history-panel').hidden=false;
+  $('reservations-panel').hidden=true;$('history-panel').hidden=false;$('reservation-columns').hidden=true;$('history-columns').hidden=false;renderHistoryColumns();
   $('open-history').classList.add('active');$('open-reservations').classList.remove('active');
   }
   if(historyLoading)return;historyLoading=true;$('refresh-history').disabled=true;
   $('history-status').textContent='Loading confirmed rental history…';
   try {
     const result=await window.fleetRentalBot.loadRentalHistory(refresh);
-    const body=$('history-body');body.replaceChildren();
-    for(const row of result.rows){
-      const tr=el('tr');
-      for(const value of [row.fleetName,RulesDisplay.utc(row.start),RulesDisplay.utc(row.end),row.status,
-        `${row.walletLabel} · ${row.borrower}`,n(row.rate),n(row.rentTotal),n(row.bid),row.currency||'—','Unavailable'])tr.append(el('td',value));
-      tr.children[0].title=`Contract: ${row.contract} · Rental: ${row.id}`;
-      const contractLink=el('button',row.fleetName);contractLink.onclick=()=>window.fleetRentalBot.openHistoryAccount(row.contract).catch(error=>{$('history-status').textContent=error.message;});tr.children[0].replaceChildren(contractLink);
-      const walletLink=el('button','Explorer');walletLink.onclick=()=>window.fleetRentalBot.openHistoryAccount(row.borrower).catch(error=>{$('history-status').textContent=error.message;});
-      const copy=el('button','Copy address');copy.onclick=()=>navigator.clipboard.writeText(row.borrower).catch(()=>{$('history-status').textContent='Copy failed; address is available in the row tooltip';});
-      tr.children[4].replaceChildren(document.createTextNode(`${row.walletLabel} · ${row.borrower.slice(0,4)}…${row.borrower.slice(-4)} `),copy,walletLink);
-      tr.children[4].title=`Borrower: ${row.borrower} · Transaction signer: unknown`;
-      tr.children[6].title='Scheduled base rent; not a payment receipt';
-      body.append(tr);
-    }
+    S.historyRows=result.rows;renderHistory();
     $('history-status').textContent=result.error?`Refresh failed; showing saved history. ${result.error}`:
-      !result.configured?'Configure a Player Profile in Settings.':result.rows.length?`${result.rows.length} recorded rentals · current-account coverage only`:'No confirmed rentals found in available account history.';
+      !result.configured?'Configure a Player Profile in Settings.':result.rows.length?`${result.rows.length} recorded rentals · observed accounts + accepted transactions`:'No confirmed rentals found in available history.';
   } catch(error){$('history-status').textContent=error.message||'History unavailable';}
   finally{historyLoading=false;$('refresh-history').disabled=false;}
 }
 $('open-history').onclick=()=>void showRentalHistory();
 $('refresh-history').onclick=()=>void showRentalHistory();
 $('open-reservations').onclick=()=>{
-  $('history-panel').hidden=true;$('reservations-panel').hidden=false;
+  $('history-panel').hidden=true;$('reservations-panel').hidden=false;$('reservation-columns').hidden=false;$('history-columns').hidden=true;
   $('open-history').classList.remove('active');$('open-reservations').classList.add('active');render();
 };
 
 async function scheduleHistoryRefresh(){await showRentalHistory(true,true);setTimeout(()=>void scheduleHistoryRefresh(),300000);}
+
+const historyColumnDefinitions=[['fleetName','Fleet / Contract'],['start','Started (UTC)'],['end','Ends (UTC)'],['status','Status'],['walletLabel','Rented by'],['rate','Rate/day (ATLAS)'],['rentTotal','Rent total (ATLAS)'],['bid','Winning bid'],['currency','Currency'],['signature','Transaction']];
+function historyColumns(){let stored;try{stored=JSON.parse(localStorage.getItem('rental-history-columns'));}catch{}return Array.isArray(stored)?historyColumnDefinitions.filter(([id])=>stored.includes(id)):historyColumnDefinitions.filter(([id])=>id!=='signature');}
+function renderHistoryColumns(){const box=$('history-column-options');box.replaceChildren();for(const [id,label] of historyColumnDefinitions){const l=el('label'),x=input('checkbox');x.checked=historyColumns().some(([key])=>key===id);x.onchange=()=>{const selected=new Set(historyColumns().map(([key])=>key));x.checked?selected.add(id):selected.delete(id);localStorage.setItem('rental-history-columns',JSON.stringify([...selected]));renderHistory();};l.append(x,document.createTextNode(label));box.append(l);}}
+function renderHistory(){const columns=historyColumns(),head=$('history-head'),body=$('history-body');head.replaceChildren(...columns.map(([,label])=>el('th',label)));body.replaceChildren();for(const row of S.historyRows||[]){const tr=el('tr');for(const [id] of columns){const td=el('td');if(id==='fleetName'){const button=el('button',row.fleetName);button.onclick=()=>window.fleetRentalBot.openHistoryAccount(row.contract).catch(e=>{$('history-status').textContent=e.message;});td.append(button);}else if(id==='signature'&&row.signature){const button=el('button','View transaction');button.onclick=()=>window.fleetRentalBot.openHistoryTransaction(row.signature).catch(e=>{$('history-status').textContent=e.message;});td.append(button);}else if(id==='start'||id==='end'){td.textContent=RulesDisplay.utc(row[id]);if(row.startEstimated)td.title='Approximate: transaction block time plus requested duration';}else td.textContent=['rate','rentTotal','bid'].includes(id)?n(row[id]):row[id]||'—';tr.append(td);}body.append(tr);}}

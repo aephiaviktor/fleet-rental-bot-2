@@ -117,3 +117,14 @@ test('returns only the signer wallet when no player profile is configured', asyn
   const owned = await resolveOwnedWalletAddresses(settings, 'https://rpc.example', {} as never);
   assert.deepEqual(owned, [signer]);
 });
+test('history wallet roles distinguish profile AUTH scope from unrelated permission bits',async()=>{
+ const {historyWalletRoles}=await import('../src/player-profile.js');
+ const {getAddressEncoder,address}=await import('@solana/kit');
+ const data=profileAccountData([mainWallet,lancerWallet]);data[30+72]=1;
+ assert.equal(historyWalletRoles(data).main,null);
+ data.set(getAddressEncoder().encode(address(PLAYER_PROFILE_PROGRAM_ID)),30+32);
+ assert.equal(historyWalletRoles(data).main,mainWallet);
+ data[110+72]=1;data.set(getAddressEncoder().encode(address(PLAYER_PROFILE_PROGRAM_ID)),110+32);
+ assert.equal(historyWalletRoles(data).main,null);
+ assert.throws(()=>historyWalletRoles(data.subarray(0,100)),/Truncated/);
+});

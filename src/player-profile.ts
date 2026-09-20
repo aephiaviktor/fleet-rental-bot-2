@@ -197,3 +197,19 @@ function unique(addresses: string[]): string[] {
 export function validatePlayerProfileAddress(value: string): string {
   return value.trim() === '' ? '' : requireSolanaAddress(value, 'playerProfile');
 }
+/** Display roles only; does not alter bidding ownership or acquisition policy. */
+export async function resolveHistoryWallets(profile:string,rpcUrl:string):Promise<{addresses:string[];main:string|null}>{
+ const account=await fetchAccount(profile,rpcUrl);
+ if(!account || account.owner!==PLAYER_PROFILE_PROGRAM_ID)throw new Error('Player Profile unavailable for history');
+ return historyWalletRoles(account.data);
+}
+export function historyWalletRoles(data:Uint8Array):{addresses:string[];main:string|null}{
+ const addresses=decodePlayerProfileKeys(data),count=data[28]|data[29]<<8;
+ if(data.length<30+count*80)throw new Error('Truncated Player Profile');
+ const auth:string[]=[];
+ for(let i=0;i<count;i++){
+  const offset=30+i*80,key=encodeBase58(data.subarray(offset,offset+32));
+  if(addresses.includes(key) && readInt64(data,offset+64)<0n && (data[offset+72]&1) && encodeBase58(data.subarray(offset+32,offset+64))===PLAYER_PROFILE_PROGRAM_ID)auth.push(key);
+ }
+ const uniqueAuth=[...new Set(auth)];return {addresses:[...new Set(addresses)],main:uniqueAuth.length===1?uniqueAuth[0]:null};
+}

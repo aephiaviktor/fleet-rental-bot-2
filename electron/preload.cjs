@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('fleetRentalBot', {
+  openHistoryTransaction: (signature) => ipcRenderer.invoke('history:open-transaction', signature),
   openHistoryAccount: (address) => ipcRenderer.invoke('history:open-account', address),
   loadRentalHistory: (refresh = false) => ipcRenderer.invoke('history:load', refresh),
   getBootstrap: () => ipcRenderer.invoke('app:get-bootstrap'),

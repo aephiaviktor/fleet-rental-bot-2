@@ -23,6 +23,7 @@ function fixture(): ContractSnapshot {
       borrower: { toString: () => 'wallet-1' },
       bidAtlas: 2_500_000_000n,
       bidPoints: 0n,
+      escrow: 18_000_000_000n,
       createdAt: 1_000n,
     } as never },
     minimumBid: { atlas: 2_625_000_000n, points: 26_250_000n, current: { atlas: 2_500_000_000n, points: 0n }, now: 1_500 },
@@ -51,7 +52,7 @@ test('maps official SRSLY snapshot units without losing reservation currency', (
 test('derives locked ATLAS only when this wallet is the defender', () => {
   const mapped = mapContractSnapshot(fixture());
   assert.deepEqual(deriveWalletPosition(mapped, 'wallet-1'), {
-    status: 'defending', atlasLocked: 25, reservedAtMs: 1_000_000,
+    status: 'defending', atlasLocked: 205, reservedAtMs: 1_000_000,
   });
   assert.deepEqual(deriveWalletPosition(mapped, 'someone-else'), {
     status: 'none', atlasLocked: 0, reservedAtMs: null,
@@ -62,7 +63,7 @@ test('treats any owned player wallet (signer, main, or lancer) as the defender',
   const mapped = mapContractSnapshot(fixture());
   // The defender 'wallet-1' is any one of the owned set.
   assert.deepEqual(deriveWalletPosition(mapped, ['signer', 'wallet-1']), {
-    status: 'defending', atlasLocked: 25, reservedAtMs: 1_000_000,
+    status: 'defending', atlasLocked: 205, reservedAtMs: 1_000_000,
   });
   assert.deepEqual(deriveWalletPosition(mapped, ['main-wallet', 'lancer-wallet', 'someone-else']), {
     status: 'none', atlasLocked: 0, reservedAtMs: null,
@@ -75,11 +76,11 @@ test('shows unknown ownership as acquisition-first bidding unless the known sign
     status: 'unknown', atlasLocked: 0, reservedAtMs: null,
   });
   assert.deepEqual(deriveWalletPosition(mapped, { status: 'unknown', addresses: ['wallet-1'] }), {
-    status: 'defending', atlasLocked: 25, reservedAtMs: 1_000_000,
+    status: 'defending', atlasLocked: 205, reservedAtMs: 1_000_000,
   });
 });
 
-test('preserves points reservations and does not report ATLAS as locked', () => {
+test('points reservations lock prepaid ATLAS rent but not an ATLAS-equivalent points bid', () => {
   const raw = fixture();
   raw.queuedRental = { ...raw.queuedRental!, data: {
     ...raw.queuedRental!.data, bidAtlas: 0n, bidPoints: 400_000_000n,
@@ -87,10 +88,10 @@ test('preserves points reservations and does not report ATLAS as locked', () => 
   const mapped = mapContractSnapshot(raw);
   assert.equal(mapped.reservationCurrency, 'POINTS');
   assert.equal(mapped.reservationBidPoints, 4);
-  assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, 0);
+  assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, 180);
 });
 
-test('uses protocol 1:1 points-to-ATLAS comparison instead of the SDK 100x ratio', () => {
+test('uses configured 100 ATLAS per point for current and projected takeover floors', () => {
   const raw = fixture();
   raw.contract.data.rate = 149_900_000_000n;
   raw.activeRental = { ...raw.activeRental!, data: { startTime: 0n, endTime: 2_000n } as never };
@@ -102,7 +103,8 @@ test('uses protocol 1:1 points-to-ATLAS comparison instead of the SDK 100x ratio
   const mapped = mapContractSnapshot(raw);
   assert.equal(mapped.reservationCurrency, 'POINTS');
   assert.equal(mapped.reservationBidPoints, 4_000);
-  assert.equal(mapped.minimumTakeoverBidAtlas, 4_399.6);
+  assert.equal(mapped.minimumTakeoverBidAtlas, 439_960);
+  assert.equal(mapped.projectedExpiryTakeoverBidAtlas, 440_000);
 });
 
 test('uses the legal zero bid for the first reservation with no defender', () => {
@@ -112,4 +114,33 @@ test('uses the legal zero bid for the first reservation with no defender', () =>
   assert.equal(mapped.minimumTakeoverBidAtlas, 0);
   assert.equal(mapped.minimumTakeoverBidPoints, 0);
   assert.equal(mapped.projectedExpiryTakeoverBidAtlas, null);
+});
+
+test('honours configured point conversion rather than hardcoding 100', () => {
+  const raw = fixture();
+  raw.config.data.atlasPerPoint = 50n;
+  raw.queuedRental!.data.bidAtlas = 0n;
+  raw.queuedRental!.data.bidPoints = 1_000_000_000n;
+  const mapped = mapContractSnapshot(raw);
+  assert.equal(mapped.minimumTakeoverBidAtlas, 525);
+  assert.equal(mapped.projectedExpiryTakeoverBidAtlas, 550);
+});
+
+test('ten points require more than 1000 ATLAS with the configured takeover premium', () => {
+  const raw = fixture();
+  raw.queuedRental!.data.bidAtlas = 0n;
+  raw.queuedRental!.data.bidPoints = 1_000_000_000n;
+  const mapped = mapContractSnapshot(raw);
+  assert.equal(mapped.minimumTakeoverBidAtlas, 1050);
+  assert.equal(mapped.projectedExpiryTakeoverBidAtlas, 1100);
+});
+
+test('zero-bid reservations still lock rent and missing cached escrow stays unknown', () => {
+  const raw = fixture();
+  raw.queuedRental!.data.bidAtlas = 0n;
+  const mapped = mapContractSnapshot(raw);
+  assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, 180);
+  delete mapped.reservationRentEscrowAtlas;
+  assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, null);
+  assert.equal(deriveWalletPosition(mapped, 'someone-else').atlasLocked, 0);
 });

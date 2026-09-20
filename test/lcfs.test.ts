@@ -114,7 +114,7 @@ test('LCFS keeps bidding when profile ownership is unknown', () => {
   if (decision.kind === 'ready') assert.equal(decision.plan.bidAtlas, 1_800);
 });
 
-test('LCFS outbids a points reservation with ATLAS under the same 1:1 maximum', () => {
+test('LCFS blocks a 4000-point defender when the ATLAS takeover exceeds the budget', () => {
   const plan = planLcfsReservation(
     { ...entry, maximumReservationBidAtlas: 5_000 },
     {
@@ -122,13 +122,12 @@ test('LCFS outbids a points reservation with ATLAS under the same 1:1 maximum', 
       reservationCurrency: 'POINTS',
       reservationBidAtlas: 0,
       reservationBidPoints: 4_000,
-      minimumTakeoverBidAtlas: 4_399.6,
+      minimumTakeoverBidAtlas: 439_960,
     },
     position,
     5_000,
   );
-  assert.equal(plan.kind, 'ready');
-  if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 4_400);
+  assert.equal(plan.kind, 'blocked');
 });
 
 test('LCFS still bids 110% after a real challenger outbids the bot', () => {

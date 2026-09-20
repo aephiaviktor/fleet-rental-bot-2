@@ -26,17 +26,15 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
   const bidAtlas = queued ? decimalAmount(BigInt(queued.bidAtlas), atlasFactor) : null;
   const bidPoints = queued ? decimalAmount(BigInt(queued.bidPoints), pointsFactor) : null;
   const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
-  // Deployed SRSLY compares points and ATLAS at 1:1. The current SDK reads
-  // config.atlasPerPoint as a human ratio and produces a 100x takeover floor,
-  // so override that SDK interpretation until upstream is corrected.
-  const minimumBid = core.computeMinimumBidFromSnapshot(snapshot, { atlasPerPoint: 1n });
+  // Use the on-chain comparison ratio (currently 100 ATLAS per point).
+  const minimumBid = core.computeMinimumBidFromSnapshot(snapshot);
   const reservationCurrency = queued
     ? (BigInt(queued.bidAtlas) > 0n ? 'ATLAS' : 'POINTS')
     : null;
   const basePointsPerDay = decimalAmount(BigInt(config.pointsPerDay), pointsFactor);
   const fleetWeight = Number(contract.weight);
   const defenderBidAtlasEquivalent = queued
-    ? BigInt(queued.bidAtlas) + BigInt(queued.bidPoints) * atlasFactor / pointsFactor
+    ? BigInt(queued.bidAtlas) + BigInt(queued.bidPoints) * BigInt(config.atlasPerPoint) * atlasFactor / pointsFactor
     : 0n;
   const expiryBase = snapshot.effectiveRate > defenderBidAtlasEquivalent
     ? snapshot.effectiveRate
@@ -56,6 +54,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
     reservationCurrency,
     reservationDefender: queued ? queued.borrower.toString() : null,
     reservationBidAtlas: bidAtlas,
+    reservationRentEscrowAtlas: queued ? decimalAmount(BigInt(queued.escrow), atlasFactor) : null,
     reservationBidPoints: bidPoints,
     minimumTakeoverBidAtlas: queued
       ? decimalAmount(BigInt(minimumBid.atlas), atlasFactor)
@@ -84,11 +83,13 @@ export function deriveWalletPosition(
   const owned = structured?.addresses ?? (typeof ownership === 'string' ? [ownership] : ownership as ReadonlyArray<string>);
   const resolution = structured?.status ?? 'resolved';
   const defending = snapshot.reservationDefender != null && owned.includes(snapshot.reservationDefender);
+  // Old cached snapshots do not carry escrow; show unknown rather than bid-only.
+  const lockedAtlas = snapshot.reservationRentEscrowAtlas == null
+    ? null
+    : snapshot.reservationRentEscrowAtlas + (snapshot.reservationBidAtlas ?? 0);
   return {
     status: defending ? 'defending' : resolution === 'unknown' ? 'unknown' : 'none',
-    atlasLocked: defending && snapshot.reservationCurrency === 'ATLAS'
-      ? snapshot.reservationBidAtlas ?? 0
-      : 0,
+    atlasLocked: defending ? lockedAtlas : 0,
     reservedAtMs: defending ? snapshot.reservationCreatedAtMs : null,
   };
 }

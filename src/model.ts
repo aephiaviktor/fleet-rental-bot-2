@@ -33,6 +33,8 @@ export interface FleetContractSnapshot {
   reservationCurrency: ReservationCurrency | null;
   reservationDefender: string | null;
   reservationBidAtlas: number | null;
+  /** Actual prepaid rent in the queued rental, excluding the contest premium. */
+  reservationRentEscrowAtlas?: number | null;
   reservationBidPoints: number | null;
   minimumTakeoverBidAtlas: number | null;
   minimumTakeoverBidPoints: number | null;
@@ -65,6 +67,6 @@ export interface FleetTableRow {
 
 export interface WalletPosition {
   status: PositionStatus;
-  atlasLocked: number;
+  atlasLocked: number | null;
   reservedAtMs: number | null;
 }

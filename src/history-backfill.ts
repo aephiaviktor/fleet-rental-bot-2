@@ -6,7 +6,7 @@ import {readRentalHistory, type RentalHistoryRow} from './rental-history.js';
 const require=createRequire(import.meta.url);
 const audit=require('@sly-rentals/core/audit') as typeof import('@sly-rentals/core/audit');
 const core=require('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
-export function decodeAcceptedRentals(tx:any, signature:string, profile:string):RentalHistoryRow[]{
+export function decodeAcceptedRentals(tx:any, signature:string, profile:string, wallets:string[]=[]):RentalHistoryRow[]{
  if(!tx?.meta || tx.meta.err!==null || !Number.isSafeInteger(tx.blockTime) || tx.blockTime<=0)return [];
  const message=tx.transaction?.message;if(!message)return [];
  const keys=[...(message.accountKeys||[]),...(tx.meta.loadedAddresses?.writable||[]),...(tx.meta.loadedAddresses?.readonly||[])].map(x=>typeof x==='string'?x:x.pubkey);
@@ -22,9 +22,17 @@ export function decodeAcceptedRentals(tx:any, signature:string, profile:string):
   const data=core.getAcceptRentalInstructionDataDecoder().decode(bytes);
   const start=tx.blockTime*1000,end=start+Number(data.duration)*1000;
   if(!Number.isSafeInteger(end)||end<=start)throw new Error('Invalid historical rental duration');
-  rows.push({id:accounts[7],contract:accounts[6],borrower:accounts[0],fleet:accounts[4],signature,start,end,rate:null,rentTotal:null,bid:null,currency:null,observedAt:Date.now(),status:end>Date.now()?'Active':'Completed',startEstimated:true});
+  rows.push({id:accounts[7],contract:accounts[6],borrower:accounts[0],fleet:accounts[4],signature,start,end,rate:null,rentTotal:null,bid:0,currency:'Unknown',bidSource:'direct-accept',observedAt:Date.now(),status:end>Date.now()?'Active':'Completed',startEstimated:true});
  }
  const events=audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),signature);
+ // Automatic promotion emits RentalAccepted without an AcceptRental instruction.
+ // Only explicitly resolved profile wallets may authorize event-only rows.
+ for(const event of events){
+  if(event.type!=='RentalAccepted' || !keys.includes(profile) || !wallets.includes(event.borrower) || rows.some(r=>r.id===event.rentalState))continue;
+  const start=Number(event.startTime)*1000,end=Number(event.endTime)*1000;
+  if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<=0||end<=start)continue;
+  rows.push({id:event.rentalState,contract:event.contract,borrower:event.borrower,signature,start,end,rate:null,rentTotal:null,bid:null,currency:null,observedAt:Date.now(),status:end>Date.now()?'Active':'Completed'});
+ }
  for(const row of rows){
   const accepted=events.find(e=>e.type==='RentalAccepted' && e.rentalState===row.id && e.contract===row.contract && e.borrower===row.borrower);
   if(accepted?.type==='RentalAccepted'){
@@ -35,18 +43,20 @@ export function decodeAcceptedRentals(tx:any, signature:string, profile:string):
  }
  return rows;
 }
-/** RentalClosed awards are integer CTF points, not ATLAS/point-bid stardust. */
+/** RentalClosed awards use 1e8 base units per point. */
 export function applyClosedRental(rows:RentalHistoryRow[],event:any,at:number,signature:string):boolean {
  if(event.type!=='RentalClosed' || typeof event.pointsAwarded!=='bigint' || event.pointsAwarded<0n || event.pointsAwarded>BigInt(Number.MAX_SAFE_INTEGER))return false;
- const candidates=rows.filter(r=>r.id===event.rentalState && r.contract===event.contract && r.borrower===event.borrower && r.start<=at).sort((a,b)=>b.start-a.start);
+ const candidates=rows.filter(r=>r.id===event.rentalState && r.contract===event.contract && r.borrower===event.borrower && r.start<at).sort((a,b)=>b.start-a.start);
  const row=candidates[0];
  if(!row || row.end>at)return false; // Cannot safely assign early-cancellation rewards without the cancellation event.
- row.pointsEarned=Number(event.pointsAwarded);row.pointsSignature=signature;return true;
+ row.pointsEarned=Number(event.pointsAwarded)/1e8;row.pointsSignature=signature;return true;
 }
 export async function backfillRentals(file:string,profile:string,wallets:string[],rpcUrl:string):Promise<void>{
  readRentalHistory(file,profile); // Initialize the per-instance database.
  const db=new DatabaseSync(file);
  db.exec('CREATE TABLE IF NOT EXISTS history_close_events(profile TEXT, signature TEXT, rental TEXT, at INTEGER, payload TEXT, PRIMARY KEY(profile,signature,rental))');
+ db.exec('CREATE TABLE IF NOT EXISTS history_evidence(profile TEXT,signature TEXT,idx INTEGER,payload TEXT,PRIMARY KEY(profile,signature,idx))');
+ db.exec('CREATE TABLE IF NOT EXISTS history_intents(profile TEXT,signature TEXT,payload TEXT,PRIMARY KEY(profile,signature))');
  db.exec('CREATE TABLE IF NOT EXISTS history_cursor(profile TEXT, wallet TEXT, signature TEXT, PRIMARY KEY(profile,wallet))');
  const sdk=require('@sly-rentals/core') as typeof import('@sly-rentals/core');
  async function rpc(method:string,params:unknown[]){
@@ -58,9 +68,11 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
  const targets=new Map<string,string>();
  for(const wallet of new Set(wallets))targets.set(wallet,await sdk.deriveBorrowerState(wallet,NEXT_GEN_SRSLY_PROGRAM_ID));
  // A rental may be accepted by a keeper/other signer. Its own account is a reliable read-only history index.
- for(const row of readRentalHistory(file,profile).filter(row=>!row.signature || row.pointsEarned===undefined))targets.set(`rental:${row.id}`,row.id);
+ for(const row of readRentalHistory(file,profile))targets.set(`rental:${row.id}`,row.id);
  for(const [wallet,pda] of targets){
-  const cursor=db.prepare('SELECT signature FROM history_cursor WHERE profile=? AND wallet=?').get(profile,wallet)?.signature;
+  // Versioned cursors force one replay of transactions consumed by older decoders.
+  const cursorKey=`events-v2:${wallet}`;
+  const cursor=db.prepare('SELECT signature FROM history_cursor WHERE profile=? AND wallet=?').get(profile,cursorKey)?.signature;
   const signatures:any[]=[];let before:string|undefined;let complete=false;
   for(let page=0;page<10;page++){
    const batch=await rpc('getSignaturesForAddress',[pda,{limit:100,commitment:'confirmed',...(before?{before}:{}),...(cursor?{until:cursor}:{})}]);
@@ -68,14 +80,16 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
    signatures.push(...batch);if(batch.length<100){complete=true;break;}before=batch.at(-1).signature;
   }
   if(!complete)throw new Error('History scan limit reached; cursor preserved');
-  const rows:RentalHistoryRow[]=[];const closes:{event:any;at:number;signature:string}[]=[];
-  for(const item of signatures){if(item.err)continue;const tx=await rpc('getTransaction',[item.signature,{encoding:'json',commitment:'confirmed',maxSupportedTransactionVersion:0}]);if(!tx)throw new Error('Historical transaction unavailable; cursor preserved');rows.push(...decodeAcceptedRentals(tx,item.signature,profile));if(tx.meta?.err===null && Number.isSafeInteger(tx.blockTime)){for(const event of audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),item.signature)){if(event.type==='RentalClosed')closes.push({event,at:tx.blockTime*1000,signature:item.signature});}}}
+  const evidence:HistoryEvidence[]=[];const rows:RentalHistoryRow[]=[];const closes:{event:any;at:number;signature:string}[]=[];
+  for(const item of signatures){if(item.err)continue;const tx=await rpc('getTransaction',[item.signature,{encoding:'json',commitment:'confirmed',maxSupportedTransactionVersion:0}]);if(!tx)throw new Error('Historical transaction unavailable; cursor preserved');evidence.push(...historyEvidence(tx,item.signature));rows.push(...decodeAcceptedRentals(tx,item.signature,profile,wallets));if(tx.meta?.err===null && Number.isSafeInteger(tx.blockTime)){for(const event of audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),item.signature)){if(event.type==='RentalClosed')closes.push({event,at:tx.blockTime*1000,signature:item.signature});}}}
   db.exec('BEGIN');try{
+   for(const e of evidence)db.prepare('INSERT OR REPLACE INTO history_evidence VALUES (?,?,?,?)').run(profile,e.signature,e.index,JSON.stringify(e,(_k,v)=>typeof v==='bigint'?v.toString():v));
    for(const row of rows){
     // Block time is an estimate: merge with observed chain timestamps within 60s, never overwrite richer account data.
     const existing=db.prepare('SELECT start,payload FROM rental_history WHERE profile=? AND id=? AND ABS(start-?)<=60000').all(profile,row.id,row.start).find(r=>JSON.parse(String(r.payload)).borrower===row.borrower);
     const prior=existing?JSON.parse(String(existing.payload)):null;
     const merged=prior?{...row,...prior,signature:row.signature,fleet:row.fleet}:row;
+    if(!prior?.bidSource){merged.bid=row.bid;merged.currency=row.currency;merged.bidSource=row.bidSource;}
     if(prior && row.rate!==null && prior.rate==null){merged.rate=row.rate;merged.rentTotal=row.rentTotal;}
     if(prior?.startEstimated && !row.startEstimated){
      db.prepare('DELETE FROM rental_history WHERE profile=? AND id=? AND start=?').run(profile,row.id,prior.start);
@@ -90,9 +104,49 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
     const event=JSON.parse(String(raw.payload));event.pointsAwarded=BigInt(event.pointsAwarded);
     applyClosedRental(current,event,Number(raw.at),String(raw.signature));
    }
+   const allEvidence=db.prepare('SELECT payload FROM history_evidence WHERE profile=?').all(profile).map(r=>JSON.parse(String(r.payload)));
+   const intents=db.prepare('SELECT payload FROM history_intents WHERE profile=?').all(profile).map(r=>JSON.parse(String(r.payload)));
+   applyBidEvidence(current,allEvidence,intents);
    for(const row of current)db.prepare('UPDATE rental_history SET payload=? WHERE profile=? AND id=? AND start=?').run(JSON.stringify(row),profile,row.id,row.start);
-   if(signatures.length)db.prepare('INSERT INTO history_cursor VALUES (?,?,?) ON CONFLICT(profile,wallet) DO UPDATE SET signature=excluded.signature').run(profile,wallet,signatures[0].signature);
+   if(signatures.length)db.prepare('INSERT INTO history_cursor VALUES (?,?,?) ON CONFLICT(profile,wallet) DO UPDATE SET signature=excluded.signature').run(profile,cursorKey,signatures[0].signature);
    db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e;}
  }}finally{db.close();}
+}
+
+export interface HistoryEvidence {event:any;slot:number;index:number;at:number;signature:string;keys:string[];}
+export function historyEvidence(tx:any,signature:string):HistoryEvidence[]{
+ if(tx?.meta?.err!==null || !Number.isSafeInteger(tx.blockTime))return [];
+ const keys=[...(tx.transaction?.message?.accountKeys||[]),...(tx.meta.loadedAddresses?.writable||[]),...(tx.meta.loadedAddresses?.readonly||[])].map(x=>typeof x==='string'?x:x.pubkey);
+ return audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),signature).map((event,index)=>({event,slot:Number(tx.slot||0),index,at:tx.blockTime*1000,signature,keys}));
+}
+/** Replay queue lifecycle, require the promoted queue account in the acceptance transaction.
+ * A borrower/contract match alone is not enough: displaced/consumed reservations are removed.
+ */
+export function applyBidEvidence(rows:RentalHistoryRow[],events:HistoryEvidence[],intents:any[]):void{
+ const pending=new Map<string,HistoryEvidence>();
+ for(const evidence of [...events].sort((a,b)=>a.slot-b.slot || a.signature.localeCompare(b.signature) || a.index-b.index)){
+  const e=evidence.event;
+  if(e.type==='ReservationPlaced'){pending.set(e.rentalState,evidence);continue;}
+  if(e.type==='ReservationKnockedOff'){pending.delete(e.rentalState);continue;}
+  if(e.type==='RentalCancelled'){pending.delete(e.rentalState);continue;}
+  if(e.type==='ContractClosed'||e.type==='ContractCreated'){
+   for(const [id,p] of pending)if(p.event.contract===e.contract)pending.delete(id);
+   continue;
+  }
+  if(e.type!=='RentalAccepted')continue;
+  const candidates=[...pending.values()].filter(p=>(p.slot<evidence.slot || p.signature===evidence.signature) && p.event.contract===e.contract && p.event.borrower===e.borrower && String(p.event.escrow)===String(e.escrow) && evidence.keys.includes(p.event.rentalState));
+  const row=rows.find(r=>r.id===e.rentalState && r.borrower===e.borrower && r.contract===e.contract && r.start===Number(e.startTime)*1000);
+  if(candidates.length===1 && row){
+   const p=candidates[0],atlas=Number(p.event.bidAtlas)/1e8,points=Number(p.event.bidPoints)/1e8;
+   if(Number.isFinite(atlas)&&Number.isFinite(points)&&atlas>=0&&points>=0&&!(atlas>0&&points>0)){
+    row.bid=atlas||points;row.currency=atlas>0?'Atlas':points>0?'Points':'Unknown';
+    row.bidSignature=p.signature;row.bidSource='reservation';
+    const intent=intents.find(i=>i.signature===p.signature && i.borrower===row.borrower && i.contract===row.contract && i.amount===row.bid && ['Atlas','Points'].includes(i.currency));
+    if(row.bid===0 && intent){row.currency=intent.currency;row.bidSource='local-intent';}
+   }
+  }
+  // An acceptance consumes the pending queue for this contract, even for another borrower.
+  for(const [id,p] of pending)if(p.event.contract===e.contract)pending.delete(id);
+ }
 }

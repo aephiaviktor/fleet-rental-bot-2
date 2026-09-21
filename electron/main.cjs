@@ -258,6 +258,13 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
         const outcome = await withUrgentRpcPriority(sharedDatabasePath(), () => executeLcfsAttempt(
           latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {
             validateAccess: (force = false) => requireAephiaAccess(force),
+            recordIntent: async (wire, amount) => {
+              const { getTransactionDecoder, getSignatureFromTransaction } = await import('@solana/kit');
+              const signature = getSignatureFromTransaction(getTransactionDecoder().decode(Buffer.from(wire, 'base64')));
+              (await domainModule('rental-history')).recordBidIntent(path.join(app.getPath('userData'), 'rental-history.sqlite'), latestSettings.playerProfile, {
+                signature, contract: latestEntry.contractAddress, borrower: latestSettings.walletAddress, currency: 'Atlas', amount,
+              });
+            },
           }, decision.plan.activeRentalEndsAtMs,
         ));
         if (outcome.kind === 'submitted') {

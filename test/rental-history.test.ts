@@ -12,7 +12,7 @@ test('history records only started owned rentals, persists and deduplicates by r
  assert.equal(readRentalHistory(file,'profile',150000).length,0);
  recordRentals(file,'profile',[rental(),rental()],150000);
  let rows=readRentalHistory(file,'profile',150000);
- assert.equal(rows.length,1);assert.equal(rows[0].status,'Active');assert.equal(rows[0].bid,5);assert.equal(rows[0].currency,'Points');
+ assert.equal(rows.length,1);assert.equal(rows[0].status,'Active');assert.equal(rows[0].bid,null);assert.equal(rows[0].currency,null);
  assert.equal(readRentalHistory(file,'profile',200000)[0].status,'Completed');
  assert.equal(readRentalHistory(file,'other',200000).length,0);
  recordRentals(file,'profile',[rental(1)],210000);
@@ -53,7 +53,7 @@ test('account refresh merges approximate backfill without losing signature or du
  try{readRentalHistory(file,'profile');const db=new DatabaseSync(file);db.prepare('INSERT INTO rental_history VALUES (?,?,?,?)').run('profile','rental',101000,JSON.stringify({id:'rental',contract:'contract',borrower:'wallet',start:101000,end:201000,rate:null,rentTotal:null,signature:'sig',startEstimated:true}));db.close();recordRentals(file,'profile',[rental()],150000);const rows=readRentalHistory(file,'profile',150000);assert.equal(rows.length,1);assert.equal(rows[0].start,100000);assert.equal(rows[0].signature,'sig');assert.equal(rows[0].rate,1);assert.equal(rows[0].startEstimated,false);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
-test('observed zero winning premium is known zero, not missing history',()=>{
+test('current cleared bid fields do not prove the historical winning premium',()=>{
  const dir=mkdtempSync(join(tmpdir(),'history-zero-')),file=join(dir,'history.sqlite');
- try{const r=rental();r.data.bidPoints=0n;recordRentals(file,'profile',[r],150000);const row=readRentalHistory(file,'profile',150000)[0];assert.equal(row.bid,0);assert.equal(row.currency,'None');}finally{rmSync(dir,{recursive:true,force:true});}
+ try{const r=rental();r.data.bidPoints=0n;recordRentals(file,'profile',[r],150000);const row=readRentalHistory(file,'profile',150000)[0];assert.equal(row.bid,null);assert.equal(row.currency,null);}finally{rmSync(dir,{recursive:true,force:true});}
 });

@@ -183,6 +183,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
   const waits: number[] = [];
   const preparedBids: number[] = [];
   const sentCandidates: string[] = [];
+  const intents: unknown[] = [];
   const accessChecks: boolean[] = [];
   const changed = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'NewDefender', reservationBidAtlas: 12_000, minimumTakeoverBidAtlas: 13_200 };
   const snapshots = [
@@ -197,7 +198,8 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
     fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
     build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
     prepareTransaction: async () => `candidate-${preparedBids.length}`,
-    submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+    recordIntent: async (candidate, amount) => { intents.push([candidate, amount]); },
+    submitPrepared: async (candidate) => { assert.deepEqual(intents, [['candidate-2',13_200]]);sentCandidates.push(candidate); return 'signature'; },
     validateAccess: async (force = false) => { accessChecks.push(force); },
   }, 100_000);
   assert.equal(result.kind, 'submitted');

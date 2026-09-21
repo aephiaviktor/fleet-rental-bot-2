@@ -13,7 +13,7 @@ interface ObservedRental {
 export interface RentalHistoryRow {
   id: string; contract: string; borrower: string; start: number; end: number;
   rate: number | null; rentTotal: number | null; bid: number | null; currency: string | null;
-  pointsEarned?: number; pointsSignature?: string; fleet?: string; signature?: string; startEstimated?: boolean; observedAt: number; status: 'Active' | 'Completed';
+  bidSignature?: string; bidSource?: 'reservation'|'local-intent'|'direct-accept'; pointsEarned?: number; pointsSignature?: string; fleet?: string; signature?: string; startEstimated?: boolean; observedAt: number; status: 'Active' | 'Completed';
 }
 function open(file: string) {
   mkdirSync(dirname(file), { recursive: true });
@@ -33,14 +33,14 @@ export function recordRentals(file: string, profile: string, rentals: ObservedRe
       if (r.borrowerProfile !== profile || r.status !== 2) continue;
       const start=Number(r.startTime)*1000,end=Number(r.endTime)*1000;
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<=0 || start>now || end<=start) continue;
-      const rate=Number(r.rate)/1e8,atlas=Number(r.bidAtlas)/1e8,points=Number(r.bidPoints)/1e8;
+      const rate=Number(r.rate)/1e8;
       const row = {id,contract:r.contract,borrower:r.borrower,start,end,rate,
-        rentTotal:rate*(end-start)/86400000,bid:atlas>0?atlas:points>0?points:0,
-        currency:atlas>0?'Atlas':points>0?'Points':'None',observedAt:now};
+        rentTotal:rate*(end-start)/86400000,bid:null,
+        currency:null,observedAt:now};
       const prior=db.prepare('SELECT start,payload FROM rental_history WHERE profile=? AND id=? AND ABS(start-?)<=60000').all(profile,id,start).find(x=>{const p=JSON.parse(String(x.payload));return p.borrower===r.borrower && p.startEstimated;});
       const previous=prior?JSON.parse(String(prior.payload)):JSON.parse(String(db.prepare('SELECT payload FROM rental_history WHERE profile=? AND id=? AND start=?').get(profile,id,start)?.payload||'{}'));
       if(prior && prior.start!==start)db.prepare('DELETE FROM rental_history WHERE profile=? AND id=? AND start=?').run(profile,id,Number(prior.start));
-      put.run(profile,id,start,JSON.stringify({...previous,...row,startEstimated:false}));
+      put.run(profile,id,start,JSON.stringify({...previous,...row,...(previous.bidSource?{bid:previous.bid,currency:previous.currency}:{}),startEstimated:false}));
     }
   } finally { db.close(); }
 }
@@ -66,4 +66,16 @@ export async function discoverRentals(profile: string, rpcUrl: string): Promise<
   }).send();
   const decoder=core.getRentalStateDecoder();
   return accounts.map(account=>({address:account.pubkey,data:decoder.decode(Buffer.from(account.account.data[0],'base64'))}));
+}
+
+/** Public intent only; never persist signed wire transactions or wallet secrets here. */
+export function recordBidIntent(file:string,profile:string,intent:{signature:string;contract:string;borrower:string;currency:'Atlas'|'Points';amount:number}):void{
+ if(!intent.signature || !['Atlas','Points'].includes(intent.currency) || !Number.isFinite(intent.amount)||intent.amount<0)throw new Error('Invalid bid intent');
+ const db=open(file);try{
+  db.exec('CREATE TABLE IF NOT EXISTS history_intents(profile TEXT,signature TEXT,payload TEXT,PRIMARY KEY(profile,signature))');
+  const prior=db.prepare('SELECT payload FROM history_intents WHERE profile=? AND signature=?').get(profile,intent.signature);
+  const payload=JSON.stringify(intent);
+  if(prior && prior.payload!==payload)throw new Error('Conflicting bid intent');
+  db.prepare('INSERT OR IGNORE INTO history_intents VALUES (?,?,?)').run(profile,intent.signature,payload);
+ }finally{db.close();}
 }

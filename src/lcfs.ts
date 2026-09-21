@@ -48,6 +48,7 @@ export type LcfsAttemptResult =
 interface PreparedLcfsCandidate {
   fingerprint: string;
   wireTransaction: string;
+  bidAtlas: number;
 }
 
 export interface LcfsDependencies {
@@ -55,6 +56,7 @@ export interface LcfsDependencies {
   resolveOwnedWallets?: (settings: AppSettings, rpcUrl: string) => Promise<WalletOwnership | string[]>;
   build?: (input: UnsignedReservationInput) => Promise<unknown>;
   prepareTransaction?: (instructions: Instruction[], settings: AppSettings, hotWalletSecret: string) => Promise<string>;
+  recordIntent?: (wireTransaction:string, amount:number) => Promise<void>;
   submitPrepared?: (wireTransaction: string) => Promise<string>;
   now?: () => number;
   waitUntil?: (targetMs: number) => Promise<void>;
@@ -182,7 +184,7 @@ async function buildCandidate(
   const wireTransaction = await (dependencies.prepareTransaction ?? prepareLcfsTransaction)(
     built as Instruction[], settings, hotWalletSecret,
   );
-  return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction };
+  return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction, bidAtlas: inspected.plan.bidAtlas };
 }
 
 async function prepareOrRefreshCandidate(
@@ -253,6 +255,7 @@ export async function executeLcfsAttempt(
   if (now() >= expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental ended while the LCFS transaction was being prepared' };
   }
+  await dependencies.recordIntent?.(candidate.wireTransaction,candidate.bidAtlas);
   const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidate.wireTransaction);
   return { kind: 'submitted', signature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
 }

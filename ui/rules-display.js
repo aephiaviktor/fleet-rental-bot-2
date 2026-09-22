@@ -1,5 +1,15 @@
 /* Shared pure display helpers, also exercised by the Node regression tests. */
 globalThis.RulesDisplay = {
+  historyCurrency(row) {
+    return row.bidSource === 'reservation' && row.bid === 0 && row.currency === 'Unknown'
+      ? 'Points*' : row.currency || '—';
+  },
+  reservationCurrency(snapshot) {
+    if (!snapshot?.reservationCurrency) return '—';
+    if (snapshot.reservationBidAtlas === 0 && snapshot.reservationBidPoints === 0) return 'Points*';
+    return snapshot.reservationCurrency === 'POINTS' ? 'Points' : snapshot.reservationCurrency === 'ATLAS' ? 'Atlas' : '—';
+  },
+  nextBid(value) { return Number.isFinite(value) && value >= 0 ? Math.ceil(Number(value.toFixed(8))) : null; },
   historyClass(status) {
     return status === 'Active' ? 'history-active' : status === 'Completed' ? 'history-completed' : '';
   },

@@ -49,7 +49,7 @@ test('LCFS schedules preparation, refresh, final check, and send with measured s
   });
 });
 
-test('LCFS bids 110% rounded up to a whole hundred and never exceeds Max bid', () => {
+test('LCFS bids 110% rounded up to a whole ATLAS and never exceeds Max bid', () => {
   const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
   const normal = planLcfsReservation(
     realisticEntry,
@@ -58,7 +58,7 @@ test('LCFS bids 110% rounded up to a whole hundred and never exceeds Max bid', (
     5_000,
   );
   assert.equal(normal.kind, 'ready');
-  if (normal.kind === 'ready') assert.equal(normal.bidAtlas, 14_500);
+  if (normal.kind === 'ready') assert.equal(normal.bidAtlas, 14_432);
 
   const exactHundred = planLcfsReservation(
     realisticEntry,
@@ -111,7 +111,7 @@ test('LCFS keeps bidding when profile ownership is unknown', () => {
   };
   const decision = evaluateLcfsEligibility(realisticEntry, unknownSnapshot, unknownPosition, 5, 5_000);
   assert.equal(decision.kind, 'ready');
-  if (decision.kind === 'ready') assert.equal(decision.plan.bidAtlas, 1_800);
+  if (decision.kind === 'ready') assert.equal(decision.plan.bidAtlas, 1_760);
 });
 
 test('LCFS blocks a 4000-point defender when the ATLAS takeover exceeds the budget', () => {
@@ -140,7 +140,7 @@ test('LCFS still bids 110% after a real challenger outbids the bot', () => {
   };
   const plan = planLcfsReservation(realisticEntry, challengerSnapshot, position, 5_000);
   assert.equal(plan.kind, 'ready');
-  if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 14_500);
+  if (plan.kind === 'ready') assert.equal(plan.bidAtlas, 14_432);
 });
 
 test('legacy watch rows default LCFS off and explicit values round-trip', () => {

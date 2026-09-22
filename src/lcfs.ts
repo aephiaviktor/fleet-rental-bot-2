@@ -81,8 +81,8 @@ function roundedAtlas(value: number): number {
   return Number(value.toFixed(8));
 }
 
-function roundedUpToHundredAtlas(value: number): number {
-  return Math.ceil(roundedAtlas(value) / 100) * 100;
+function roundedUpToWholeAtlas(value: number): number {
+  return Math.ceil(roundedAtlas(value));
 }
 
 export function planLcfsReservation(
@@ -107,7 +107,7 @@ export function planLcfsReservation(
   }
 
   const currentBid = snapshot.reservationBidAtlas;
-  const bidAtlas = roundedUpToHundredAtlas(Math.max(base.bidAtlas, roundedAtlas(currentBid * 1.1)));
+  const bidAtlas = roundedUpToWholeAtlas(Math.max(base.bidAtlas, roundedAtlas(currentBid * 1.1)));
   if (bidAtlas > entry.maximumReservationBidAtlas) {
     return {
       kind: 'blocked',

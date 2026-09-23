@@ -233,11 +233,24 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
   }
   const nowMs = Date.now();
   for (const result of results) {
-    if (!result.ok) continue;
     const entry = watchlist.entries.find((candidate) => candidate.id === result.id);
     if (!entry?.lcfs) continue;
+    if (!result.ok) {
+      // Audit snapshot failures (for example RPC 429s) so silently skipped
+      // fleets leave an auditable reason instead of vanishing without a trace.
+      await recordLcfsAttempt(`blocked:${entry.id}:unavailable:${nowMs}`, 'blocked', String(result.error ?? 'snapshot unavailable')).catch(() => {});
+      continue;
+    }
     const decision = evaluateLcfsEligibility(entry, result.row.snapshot, result.row.position, settings.lcfsLeadTimeSeconds, nowMs);
-    if (decision.kind === 'blocked') continue;
+    if (decision.kind === 'blocked') {
+      const end = result.row.snapshot?.activeRentalEndsAtMs;
+      const endKey = Number.isFinite(end) && end > 0 ? Math.floor(end / 1000) : 'no-rental';
+      // Blocked decisions are auditable but must never be mistaken for an
+      // attempted bid, so they use a separate key namespace. The refresh time
+      // keeps repeated decisions as events instead of overwriting one row.
+      await recordLcfsAttempt(`blocked:${entry.id}:${endKey}:${nowMs}`, 'blocked', decision.reason).catch(() => {});
+      continue;
+    }
     const key = lcfsAttemptKey(entry.id, decision.plan.activeRentalEndsAtMs);
     eligibleKeys.add(key);
     if (attempted.has(key) || lcfsTimers.has(key)) continue;

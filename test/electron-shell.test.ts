@@ -10,6 +10,9 @@ test('Electron shell keeps renderer sandboxed and limits automated signing to LC
   assert.match(main, /readOnly:\s*false/);
   assert.match(main, /scheduleLcfsAttempts/);
   assert.match(main, /recordLcfsAttempt/);
+  assert.match(main, /blocked:\$\{entry\.id\}:unavailable:\$\{nowMs\}/);
+  assert.match(main, /const endKey = Number\.isFinite\(end\).+no-rental/);
+  assert.match(main, /blocked:\$\{entry\.id\}:\$\{endKey\}:\$\{nowMs\}/);
   assert.match(main, /executeLcfsAttempt/);
   assert.match(main, /safeStorage\.encryptString/);
   assert.match(main, /safeStorage\.decryptString/);

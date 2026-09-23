@@ -79,7 +79,7 @@ test('LCFS bids 110% rounded up to a whole ATLAS and never exceeds Max bid', () 
   if (blocked.kind === 'blocked') assert.match(blocked.detail, /rounded 110%.*maximum 20000/i);
 });
 
-test('LCFS does not overbid its own manual reservation (self-defender guard)', () => {
+test('LCFS arms a watch while self-defending instead of blocking the attempt', () => {
   const realisticEntry = { ...entry, maximumReservationBidAtlas: 20_000 };
   const defendingPosition: WalletPosition = { status: 'defending', atlasLocked: 10_000, reservedAtMs: 1_000 };
   const defendedSnapshot = {
@@ -89,15 +89,131 @@ test('LCFS does not overbid its own manual reservation (self-defender guard)', (
     minimumTakeoverBidAtlas: 11_000,
   };
 
-  // The defender is our own wallet: the reservation is already held, so LCFS
-  // must stay idle instead of bidding 110% against our own manual bid.
+  // Still the bot's own wallet: the plan must arm a last-second watch and mark
+  // it watchOnly so execution can stand down at send time instead of bidding
+  // against our own manual bid.
   const plan = planLcfsReservation(realisticEntry, defendedSnapshot, defendingPosition, 5_000);
-  assert.equal(plan.kind, 'blocked');
-  if (plan.kind === 'blocked') assert.match(plan.detail, /already the reservation defender/i);
+  assert.equal(plan.kind, 'ready');
+  if (plan.kind === 'ready') assert.equal(plan.watchOnly, true);
 
   const decision = evaluateLcfsEligibility(realisticEntry, defendedSnapshot, defendingPosition, 5, 5_000);
-  assert.equal(decision.kind, 'blocked');
-  if (decision.kind === 'blocked') assert.match(decision.reason, /already the reservation defender/i);
+  assert.equal(decision.kind, 'ready');
+  if (decision.kind === 'ready') assert.equal(decision.plan.watchOnly, true);
+});
+
+test('LCFS watch stands down at send time and submits nothing when no challenger appeared', async () => {
+  let nowMs = 60_000;
+  const waits: number[] = [];
+  const preparedBids: number[] = [];
+  const sentCandidates: string[] = [];
+  const intents: unknown[] = [];
+  const watched = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'my-wallet', reservationBidAtlas: 2_581, minimumTakeoverBidAtlas: 2_839.1 };
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 12_000 },
+    { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      resolveOwnedWallets: async () => ['my-wallet'],
+      now: () => nowMs,
+      waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
+      fetchBundle: async () => ({ raw: {} as never, mapped: watched }),
+      build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
+      prepareTransaction: async () => `candidate-${preparedBids.length}`,
+      recordIntent: async (candidate, amount) => { intents.push([candidate, amount]); },
+      submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+      validateAccess: async () => {},
+    },
+    100_000,
+  );
+  assert.equal(result.kind, 'blocked');
+  if (result.kind === 'blocked') assert.match(result.reason, /self-defender at send time/i);
+  assert.deepEqual(preparedBids, []);
+  assert.deepEqual(sentCandidates, []);
+  assert.deepEqual(intents, []);
+});
+
+test('LCFS watch becomes a real counter-bid when a stranger outbids before send', async () => {
+  let nowMs = 60_000;
+  const waits: number[] = [];
+  const preparedBids: number[] = [];
+  const sentCandidates: string[] = [];
+  const intents: unknown[] = [];
+  const selfState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'my-wallet', reservationBidAtlas: 2_581, minimumTakeoverBidAtlas: 2_839.1 };
+  const strangerState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'stranger-wallet', reservationBidAtlas: 2_839.1, minimumTakeoverBidAtlas: 2_839.1 };
+  const snapshots = [selfState, strangerState, strangerState, strangerState];
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 12_000 },
+    { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      resolveOwnedWallets: async () => ['my-wallet'],
+      now: () => nowMs,
+      waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
+      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+      build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
+      prepareTransaction: async () => `candidate-${preparedBids.length}`,
+      recordIntent: async (candidate, amount) => { intents.push([candidate, amount]); },
+      submitPrepared: async (candidate) => { assert.deepEqual(intents, [['candidate-1', 3_124]]); sentCandidates.push(candidate); return 'signature'; },
+      validateAccess: async () => {},
+    },
+    100_000,
+  );
+  assert.equal(result.kind, 'submitted');
+  assert.deepEqual(preparedBids, [3_124]);
+  assert.deepEqual(sentCandidates, ['candidate-1']);
+});
+
+test('LCFS discards a prepared counter-bid if our wallet regains the top spot', async () => {
+  let nowMs = 60_000;
+  const preparedBids: number[] = [];
+  const sentCandidates: string[] = [];
+  const strangerState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'stranger-wallet', reservationBidAtlas: 2_839.1, minimumTakeoverBidAtlas: 2_839.1 };
+  const selfState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'my-wallet', reservationBidAtlas: 3_124, minimumTakeoverBidAtlas: 3_436.4 };
+  const snapshots = [strangerState, strangerState, selfState, selfState];
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 12_000 },
+    { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      resolveOwnedWallets: async () => ['my-wallet'],
+      now: () => nowMs,
+      waitUntil: async (targetMs) => { nowMs = targetMs; },
+      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+      build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
+      prepareTransaction: async () => 'stale-candidate',
+      submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+      validateAccess: async () => {},
+    },
+    100_000,
+  );
+  assert.equal(result.kind, 'blocked');
+  if (result.kind === 'blocked') assert.match(result.reason, /self-defender at send time/i);
+  assert.deepEqual(preparedBids, [3_124]);
+  assert.deepEqual(sentCandidates, []);
+});
+
+test('LCFS re-checks at the send deadline and catches a challenger arriving after the final check', async () => {
+  let nowMs = 60_000;
+  const fetchTimes: number[] = [];
+  const sentCandidates: string[] = [];
+  const selfState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'my-wallet', reservationBidAtlas: 2_581, minimumTakeoverBidAtlas: 2_839.1 };
+  const strangerState = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'stranger-wallet', reservationBidAtlas: 2_839.1, minimumTakeoverBidAtlas: 2_839.1 };
+  const snapshots = [selfState, selfState, selfState, strangerState];
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 12_000 },
+    { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      resolveOwnedWallets: async () => ['my-wallet'],
+      now: () => nowMs,
+      waitUntil: async (targetMs) => { nowMs = targetMs; },
+      fetchBundle: async () => { fetchTimes.push(nowMs); return { raw: {} as never, mapped: snapshots.shift()! }; },
+      build: async ({ plan }) => { assert.equal(plan.kind, 'ready'); assert.equal(plan.bidAtlas, 3_124); return []; },
+      prepareTransaction: async () => 'send-time-candidate',
+      submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
+      validateAccess: async () => {},
+    },
+    100_000,
+  );
+  assert.equal(result.kind, 'submitted');
+  assert.deepEqual(fetchTimes, [70_000, 90_000, 93_000, 95_000]);
+  assert.deepEqual(sentCandidates, ['send-time-candidate']);
 });
 
 test('LCFS keeps bidding when profile ownership is unknown', () => {
@@ -190,6 +306,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
     { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10_000, minimumTakeoverBidAtlas: 11_000 },
     changed,
     changed,
+    changed,
   ];
   const result = await executeLcfsAttempt({ ...entry, maximumReservationBidAtlas: 20_000 }, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
     resolveOwnedWallets: async () => [],
@@ -206,7 +323,7 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
   assert.deepEqual(waits, [70_000, 90_000, 93_000, 95_000]);
   assert.deepEqual(preparedBids, [11_000, 13_200]);
   assert.deepEqual(sentCandidates, ['candidate-2']);
-  assert.deepEqual(accessChecks, [false, true, false]);
+  assert.deepEqual(accessChecks, [false, true, false, false]);
 });
 
 test('LCFS replaces SDK no-op signer identities before signing the prepared transaction', () => {

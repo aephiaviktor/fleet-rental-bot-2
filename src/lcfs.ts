@@ -38,12 +38,17 @@ export interface LcfsSchedule {
 }
 
 export type LcfsEligibility =
-  | ({ kind: 'ready'; executeAtMs: number; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> } & LcfsSchedule)
+  | ({ kind: 'ready'; executeAtMs: number; plan: Extract<LcfsReservationPlan, { kind: 'ready' }> } & LcfsSchedule)
   | { kind: 'blocked'; reason: string };
 
 export type LcfsAttemptResult =
   | { kind: 'submitted'; signature: string; attemptKey: string }
   | { kind: 'blocked'; reason: string };
+
+type ReadyAtlasReservationPlan = Extract<AtlasReservationPlan, { kind: 'ready' }>;
+export type LcfsReservationPlan =
+  | Extract<AtlasReservationPlan, { kind: 'blocked' }>
+  | (ReadyAtlasReservationPlan & { watchOnly?: boolean });
 
 interface PreparedLcfsCandidate {
   fingerprint: string;
@@ -90,20 +95,19 @@ export function planLcfsReservation(
   snapshot: FleetContractSnapshot,
   position: WalletPosition,
   nowMs = Date.now(),
-): AtlasReservationPlan {
+): LcfsReservationPlan {
   const base = planAtlasReservation(entry, snapshot, position, nowMs);
   if (base.kind === 'blocked' || snapshot.reservationBidAtlas == null) return base;
 
-  // Self-defender guard: if the on-chain reservation defender is our own wallet,
-  // we already hold the reservation. Do not overbid against our own manual bid;
-  // stay idle while defending and only bid again once a real challenger takes
-  // the top spot (which flips reservationDefender away from our wallet).
+  // Self-defender watch: while the on-chain reservation defender is our own
+  // wallet we already hold the top spot, so we never overbid our own manual
+  // bid. We still arm the last-second window and mark the plan watchOnly:
+  // each inspection re-fetches fresh state, so a real challenger replacing us
+  // rebuilds as a 110% counter-bid, while standing down at send time without
+  // a transaction when we are still the defender. This closes the gap where
+  // a snipe in the final seconds could otherwise never be answered.
   if (position.status === 'defending') {
-    return {
-      kind: 'blocked',
-      reason: 'self-defender',
-      detail: 'Already the reservation defender; no overbid needed while we hold the reservation',
-    };
+    return { ...base, watchOnly: true };
   }
 
   const currentBid = snapshot.reservationBidAtlas;
@@ -157,7 +161,7 @@ async function inspectFreshState(
   nowMs: number,
   fetchBundle: NonNullable<LcfsDependencies['fetchBundle']>,
   resolveOwnedWallets: NonNullable<LcfsDependencies['resolveOwnedWallets']>,
-): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<AtlasReservationPlan, { kind: 'ready' }> } | LcfsAttemptResult> {
+): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<LcfsReservationPlan, { kind: 'ready' }> } | Extract<LcfsAttemptResult, { kind: 'blocked' }>> {
   const { raw, mapped } = await fetchBundle(entry.contractAddress, settings.rpcUrl);
   if (mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental changed after this LCFS attempt was scheduled' };
@@ -187,6 +191,10 @@ async function buildCandidate(
   return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction, bidAtlas: inspected.plan.bidAtlas };
 }
 
+type CandidateRefreshResult =
+  | { kind: 'candidate'; candidate: PreparedLcfsCandidate | null }
+  | Extract<LcfsAttemptResult, { kind: 'blocked' }>;
+
 async function prepareOrRefreshCandidate(
   previous: PreparedLcfsCandidate | null,
   entry: FleetWatchEntry,
@@ -195,14 +203,19 @@ async function prepareOrRefreshCandidate(
   expectedActiveRentalEndsAtMs: number,
   dependencies: LcfsDependencies,
   nowMs: number,
-): Promise<PreparedLcfsCandidate | LcfsAttemptResult> {
+): Promise<CandidateRefreshResult> {
   const fetchBundle = dependencies.fetchBundle ?? loadBundle;
   const resolveOwnedWallets = dependencies.resolveOwnedWallets ?? resolveWalletOwnership;
   const inspected = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, nowMs, fetchBundle, resolveOwnedWallets);
   if ('kind' in inspected) return inspected;
+  // While we are the defender there is nothing to sign: stand by until either
+  // a challenger flips the top spot (fresh plan is no longer watchOnly) or the
+  // send deadline passes without one. Returning null also discards any stale
+  // challenger candidate if our wallet regained the top spot.
+  if (inspected.plan.watchOnly) return { kind: 'candidate', candidate: null };
   const fingerprint = candidateFingerprint(inspected.mapped, inspected.plan);
-  if (previous?.fingerprint === fingerprint) return previous;
-  return buildCandidate(inspected, settings, hotWalletSecret, dependencies);
+  if (previous?.fingerprint === fingerprint) return { kind: 'candidate', candidate: previous };
+  return { kind: 'candidate', candidate: await buildCandidate(inspected, settings, hotWalletSecret, dependencies) };
 }
 
 export async function executeLcfsAttempt(
@@ -230,33 +243,47 @@ export async function executeLcfsAttempt(
   const schedule = lcfsSchedule(expectedActiveRentalEndsAtMs, settings.lcfsLeadTimeSeconds);
   const validateAccess = dependencies.validateAccess ?? (async () => undefined);
 
+  const candidateState: { value: PreparedLcfsCandidate | null } = { value: null };
+  const refreshCandidate = async (forceAccessCheck: boolean): Promise<Extract<LcfsAttemptResult, { kind: 'blocked' }> | null> => {
+    await validateAccess(forceAccessCheck);
+    const refreshed = await prepareOrRefreshCandidate(
+      candidateState.value, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
+    );
+    if (refreshed.kind === 'blocked') return refreshed;
+    candidateState.value = refreshed.candidate;
+    return null;
+  };
+
   await waitForPhase(schedule.prepareAtMs);
-  await validateAccess(false);
-  let candidate = await prepareOrRefreshCandidate(
-    null, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
-  );
-  if ('kind' in candidate) return candidate;
+  let blocked = await refreshCandidate(false);
+  if (blocked) return blocked;
 
   await waitForPhase(schedule.refreshAtMs);
-  await validateAccess(true);
-  candidate = await prepareOrRefreshCandidate(
-    candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
-  );
-  if ('kind' in candidate) return candidate;
+  blocked = await refreshCandidate(true);
+  if (blocked) return blocked;
 
   await waitForPhase(schedule.finalCheckAtMs);
-  await validateAccess(false);
-  candidate = await prepareOrRefreshCandidate(
-    candidate, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
-  );
-  if ('kind' in candidate) return candidate;
+  blocked = await refreshCandidate(false);
+  if (blocked) return blocked;
 
   await waitForPhase(schedule.sendAtMs);
   if (now() >= expectedActiveRentalEndsAtMs) {
     return { kind: 'blocked', reason: 'Active rental ended while the LCFS transaction was being prepared' };
   }
-  await dependencies.recordIntent?.(candidate.wireTransaction,candidate.bidAtlas);
-  const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidate.wireTransaction);
+  // Re-fetch at the actual send deadline. A challenger can appear in the few
+  // seconds after the final check, which is exactly the gap LCFS must cover.
+  blocked = await refreshCandidate(false);
+  if (blocked) return blocked;
+  if (now() >= expectedActiveRentalEndsAtMs) {
+    return { kind: 'blocked', reason: 'Active rental ended during the final LCFS state check' };
+  }
+  if (!candidateState.value) {
+    // We were still the reservation defender at the send deadline and no real
+    // challenger replaced us, so no transaction is needed and none is sent.
+    return { kind: 'blocked', reason: 'self-defender at send time: no challenger appeared' };
+  }
+  await dependencies.recordIntent?.(candidateState.value.wireTransaction, candidateState.value.bidAtlas);
+  const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidateState.value.wireTransaction);
   return { kind: 'submitted', signature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
 }
 

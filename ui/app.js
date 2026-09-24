@@ -58,7 +58,7 @@ async function showRentalHistory(refresh=true,background=false){
 let activeNav=null;function toggleColumns(sectionId){const show=$(sectionId).hidden;$('reservation-columns').hidden=true;$('history-columns').hidden=true;$(sectionId).hidden=!show}
 $('open-history').onclick=()=>{const repeat=activeNav==='open-history';activeNav='open-history';void showRentalHistory();if(repeat)toggleColumns('history-columns');else{$('reservation-columns').hidden=true;$('history-columns').hidden=true}};
 $('refresh-history').onclick=()=>void showRentalHistory();
-$('open-reservations').onclick=()=>{const repeat=activeNav==='open-reservations';activeNav='open-reservations';$('history-panel').hidden=true;$('reservations-panel').hidden=false;$('open-history').classList.remove('active');$('open-reservations').classList.add('active');$('reservation-columns').hidden=true;$('history-columns').hidden=true;render();if(repeat)toggleColumns('reservation-columns')};
+$('open-reservations').onclick=()=>{const repeat=activeNav==='open-reservations';activeNav='open-reservations';$('history-panel').hidden=true;$('reservations-panel').hidden=false;$('open-history').classList.remove('active');$('open-reservations').classList.add('active');render();if(repeat)toggleColumns('reservation-columns');else{$('reservation-columns').hidden=true;$('history-columns').hidden=true}};
 
 async function scheduleHistoryRefresh(){await showRentalHistory(true,true);setTimeout(()=>void scheduleHistoryRefresh(),300000);}
 

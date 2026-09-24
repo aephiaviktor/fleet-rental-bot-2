@@ -162,7 +162,15 @@ test('repeated nav clicks toggle the sidebar column picker', async () => {
   assert.match(renderer, /function toggleColumns/);
   assert.match(renderer, /toggleColumns\('reservation-columns'\)/);
   assert.match(renderer, /toggleColumns\('history-columns'\)/);
-  assert.match(renderer, /\$\('reservation-columns'\)\.hidden=true;\$\('history-columns'\)\.hidden=true/);
+  const reservationsHandler = renderer.slice(
+    renderer.indexOf("$('open-reservations').onclick"),
+    renderer.indexOf('async function scheduleHistoryRefresh'),
+  );
+  // Do not reset the picker before a repeat click: click 2 must show and click 3 must hide.
+  assert.match(
+    reservationsHandler,
+    /render\(\);if\(repeat\)toggleColumns\('reservation-columns'\);else\{\$\('reservation-columns'\)\.hidden=true;\$\('history-columns'\)\.hidden=true\}/,
+  );
 });
 
 test('reservations panel always explains the latest LCFS attempt outcome', async () => {

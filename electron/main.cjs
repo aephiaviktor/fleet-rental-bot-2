@@ -691,6 +691,11 @@ ipcMain.handle('reservation:review', async (_event, entryId) => {
   return prepareReservationReview(entry, settings);
 });
 
+ipcMain.handle('lcfs:state', async () => {
+  await requireAephiaAccess();
+  const state = await readLcfsState();
+  return state.attempts;
+});
 ipcMain.handle('reservation:simulate', async (_event, entryId) => {
   await requireAephiaAccess();
   if (typeof entryId !== 'string' || !entryId) throw new Error('Watchlist entry ID is required');

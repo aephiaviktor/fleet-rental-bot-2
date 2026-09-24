@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   },
   prepareReservationReview: (entryId) => ipcRenderer.invoke('reservation:review', entryId),
   simulateReservation: (entryId) => ipcRenderer.invoke('reservation:simulate', entryId),
+  getLcfsState: () => ipcRenderer.invoke('lcfs:state'),
   onLcfsStatus: (listener) => ipcRenderer.on('lcfs:status', (_event, status) => listener(status)),
   onAephiaAccessStatus: (listener) => ipcRenderer.on('access:status', (_event, status) => listener(status)),
 });

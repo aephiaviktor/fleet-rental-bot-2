@@ -1,14 +1,12 @@
-import { createRequire } from 'node:module';
 import { address, createNoopSigner, createSolanaRpc, type Instruction, type TransactionSigner } from '@solana/kit';
 import type { ContractSnapshot, ReserveRentalParams } from '@sly-rentals/core';
 import type { AtlasReservationPlan } from './reservation-plan.js';
+import { rentalSdk } from './rental-sdk.js';
 import { requireSolanaAddress } from './solana-address.js';
-
-const require = createRequire(import.meta.url);
 
 export type ReserveRentalBuilder = (
   params: ReserveRentalParams,
-  config?: { rpcUrl?: string },
+  config?: { rpcUrl?: string; programs?: 'mainnet' },
 ) => Promise<unknown>;
 
 export interface UnsignedReservationInput {
@@ -30,14 +28,14 @@ function unwrapInstructions(value: unknown): Instruction[] {
 }
 
 async function buildBorrowerInitialization(signer: TransactionSigner, rpcUrl: string): Promise<Instruction[]> {
-  const sdk = require('@sly-rentals/core') as {
+  const sdk = rentalSdk() as typeof import('@sly-rentals/core') & {
     deriveBorrowerState: (borrower: TransactionSigner) => Promise<string>;
-    createBorrower: (params: { borrower: TransactionSigner }, config?: { rpcUrl?: string }) => Promise<unknown>;
+    createBorrower: (params: { borrower: TransactionSigner }, config?: { rpcUrl?: string; programs?: 'mainnet' }) => Promise<unknown>;
   };
   const borrowerState = await sdk.deriveBorrowerState(signer);
   const account = await createSolanaRpc(rpcUrl).getAccountInfo(address(borrowerState), { encoding: 'base64' }).send();
   if (account.value !== null) return [];
-  return unwrapInstructions(await sdk.createBorrower({ borrower: signer }, { rpcUrl }));
+  return unwrapInstructions(await sdk.createBorrower({ borrower: signer }, { rpcUrl, programs: 'mainnet' }));
 }
 
 export async function buildUnsignedAtlasReservation(input: UnsignedReservationInput): Promise<unknown> {
@@ -47,7 +45,7 @@ export async function buildUnsignedAtlasReservation(input: UnsignedReservationIn
   const rawRate = BigInt(input.snapshot.contract.data.rate);
   const signer = createNoopSigner(address(walletAddress));
   const initializeBorrower = input.initializeBorrower ?? buildBorrowerInitialization;
-  const reserve = input.reserve ?? (require('@sly-rentals/core') as { reserveRental: ReserveRentalBuilder }).reserveRental;
+  const reserve = input.reserve ?? (rentalSdk() as { reserveRental: ReserveRentalBuilder }).reserveRental;
 
   const borrowerInstructions = unwrapInstructions(await initializeBorrower(signer, input.rpcUrl));
   const result = await reserve({
@@ -61,6 +59,6 @@ export async function buildUnsignedAtlasReservation(input: UnsignedReservationIn
     autoMinBid: false,
     computeUnits: 300_000,
     snapshot: input.snapshot,
-  }, { rpcUrl: input.rpcUrl });
+  }, { rpcUrl: input.rpcUrl, programs: 'mainnet' });
   return [...borrowerInstructions, ...unwrapInstructions(result)];
 }

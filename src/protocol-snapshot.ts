@@ -1,8 +1,6 @@
-import { createRequire } from 'node:module';
 import type { ContractSnapshot } from '@sly-rentals/core';
 import type { FleetContractSnapshot, WalletOwnership, WalletPosition } from './model.js';
-
-const require = createRequire(import.meta.url);
+import { rentalSdk } from './rental-sdk.js';
 
 const DEFAULT_DECIMAL_FACTOR = 100_000_000;
 
@@ -25,7 +23,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
   const pointsFactor = BigInt(DEFAULT_DECIMAL_FACTOR);
   const bidAtlas = queued ? decimalAmount(BigInt(queued.bidAtlas), atlasFactor) : null;
   const bidPoints = queued ? decimalAmount(BigInt(queued.bidPoints), pointsFactor) : null;
-  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  const core = rentalSdk();
   // Use the on-chain comparison ratio (currently 100 ATLAS per point).
   const minimumBid = core.computeMinimumBidFromSnapshot(snapshot);
   const reservationCurrency = queued
@@ -96,7 +94,7 @@ export function deriveWalletPosition(
 
 export async function loadContractSnapshot(contractAddress: string, rpcUrl: string): Promise<FleetContractSnapshot> {
   const snapshot = await loadRawContractSnapshot(contractAddress, rpcUrl);
-  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  const core = rentalSdk();
   const fleet = await core.fetchFleet(snapshot.contract.data.fleet.toString(), rpcUrl);
   const fleetName = Buffer.from(fleet.fleetLabel).toString('utf8').replace(/\0/g, '').trim();
   return mapContractSnapshot(snapshot, fleetName || snapshot.contract.data.fleet.toString());
@@ -105,8 +103,6 @@ export async function loadContractSnapshot(contractAddress: string, rpcUrl: stri
 export async function loadRawContractSnapshot(contractAddress: string, rpcUrl: string): Promise<ContractSnapshot> {
   if (!contractAddress.trim()) throw new Error('Contract address is required');
   if (!rpcUrl.trim()) throw new Error('RPC URL is required');
-  // @sly-rentals/core 5.4.0 publishes a working CommonJS build, while its ESM
-  // root contains extensionless directory imports that Node 24 rejects.
-  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  const core = rentalSdk();
   return core.getContractSnapshot({ contractAddress, rpcUrl });
 }

@@ -1,6 +1,6 @@
 {
   "name": "fleet-rental-bot-2",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "private": true,
   "author": "Aephia Industries",
   "description": "Next-generation SRSLY fleet reservation watchlist and manager",
@@ -17,7 +17,7 @@
     "package:windows": "npm run build && electron-builder --win portable --x64"
   },
   "dependencies": {
-    "@sly-rentals/core": "5.4.0",
+    "@sly-rentals/core": "6.1.0",
     "@solana/kit": "2.3.0",
     "ws": "^8.21.3"
   },

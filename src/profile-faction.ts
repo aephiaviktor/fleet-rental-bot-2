@@ -1,8 +1,6 @@
-import { createRequire } from 'node:module';
 import { address, getAddressEncoder } from '@solana/kit';
+import { rentalSdk } from './rental-sdk.js';
 import { requireSolanaAddress } from './solana-address.js';
-
-const require = createRequire(import.meta.url);
 const PROFILE_FACTION_DISCRIMINATOR = Uint8Array.from([14, 149, 119, 243, 145, 240, 79, 227]);
 const PROFILE_OFFSET = 9;
 const FACTION_OFFSET = 41;
@@ -76,7 +74,7 @@ async function findRpcProfileFactionAccounts(profile: string, rpcUrl: string, pr
 }
 
 function defaultDependencies(): ProfileFactionDependencies {
-  const core = require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+  const core = rentalSdk();
   return {
     deriveProfileFaction: async (profile) => String(await core.deriveProfileFaction(profile)),
     profileFactionProgram: core.MAINNET_ADDRESSES.profileFaction,

@@ -7,6 +7,7 @@ test('packaging includes runtime files and excludes source and tests', async () 
     dependencies: Record<string, string>;
     build: { asar: boolean; files: string[] };
   };
+  assert.equal(pkg.dependencies['@sly-rentals/core'], '6.1.0', 'rental SDK must be pinned to the audited release');
   assert.match(pkg.dependencies.ws, /^\^8\./, 'Solana WebSocket peer must be packaged as a direct runtime dependency');
   assert.equal(pkg.build.asar, true);
   assert.deepEqual(pkg.build.files, ['electron/**/*', 'assets/fleet-rental-bot-*.ico', 'ui/**/*', 'dist/src/**/*', 'package.json']);

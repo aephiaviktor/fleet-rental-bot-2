@@ -3,6 +3,7 @@ import {getBase58Encoder} from '@solana/kit';
 import {DatabaseSync} from 'node:sqlite';
 import {NEXT_GEN_SRSLY_PROGRAM_ID} from './model.js';
 import {readRentalHistory, type RentalHistoryRow} from './rental-history.js';
+import {rentalSdk} from './rental-sdk.js';
 const require=createRequire(import.meta.url);
 const audit=require('@sly-rentals/core/audit') as typeof import('@sly-rentals/core/audit');
 const core=require('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
@@ -58,7 +59,7 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
  db.exec('CREATE TABLE IF NOT EXISTS history_evidence(profile TEXT,signature TEXT,idx INTEGER,payload TEXT,PRIMARY KEY(profile,signature,idx))');
  db.exec('CREATE TABLE IF NOT EXISTS history_intents(profile TEXT,signature TEXT,payload TEXT,PRIMARY KEY(profile,signature))');
  db.exec('CREATE TABLE IF NOT EXISTS history_cursor(profile TEXT, wallet TEXT, signature TEXT, PRIMARY KEY(profile,wallet))');
- const sdk=require('@sly-rentals/core') as typeof import('@sly-rentals/core');
+ const sdk=rentalSdk();
  async function rpc(method:string,params:unknown[]){
   const response=await fetch(rpcUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
   if(!response.ok)throw new Error(`History RPC HTTP ${response.status}`);

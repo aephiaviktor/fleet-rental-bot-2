@@ -17,12 +17,17 @@ const snapshot = { contract: { data: { rate: 0n } } } as ContractSnapshot;
 
 test('assembles official SDK parameters with a no-op signer and exact guarded values', async () => {
   let captured: Record<string, unknown> | null = null;
+  let capturedConfig: Record<string, unknown> | null = null;
   const instructions = [{ programAddress: 'program', accounts: [], data: new Uint8Array() }];
   const result = await buildUnsignedAtlasReservation({
     plan, walletAddress: wallet, challengerProfile: profile,
     rpcUrl: 'https://api.mainnet-beta.solana.com', snapshot,
     initializeBorrower: async () => [],
-    reserve: async (params) => { captured = params as unknown as Record<string, unknown>; return instructions as never; },
+    reserve: async (params, config) => {
+      captured = params as unknown as Record<string, unknown>;
+      capturedConfig = config as unknown as Record<string, unknown>;
+      return instructions as never;
+    },
   });
   assert.deepEqual(result, instructions);
   assert.equal((captured!.challenger as { address: string }).address, wallet);
@@ -33,6 +38,7 @@ test('assembles official SDK parameters with a no-op signer and exact guarded va
   assert.equal(captured!.autoMinBid, false);
   assert.equal(captured!.computeUnits, 300_000);
   assert.equal((captured!.rate as { stardust: bigint }).stardust, 0n);
+  assert.equal(capturedConfig!.programs, 'mainnet');
 });
 
 test('unwraps the official SDK iterable instruction result', async () => {

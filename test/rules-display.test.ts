@@ -35,3 +35,39 @@ test('queued zero bids show assumed Points, missing reservations do not', () => 
  assert.equal(context.RulesDisplay.reservationCurrency({reservationCurrency:'ATLAS',reservationBidAtlas:500,reservationBidPoints:0}),'Atlas');
  assert.equal(context.RulesDisplay.reservationCurrency({reservationCurrency:null,reservationBidAtlas:null,reservationBidPoints:null}),'—');
 });
+
+test('LCFS report only includes reservations that ended in the last 48 hours', () => {
+ const now=Date.UTC(2026,8,27,8);
+ const entries=[
+  {id:'recent',label:'',contractAddress:'recent-contract',lcfs:true},
+  {id:'future',label:'Future',contractAddress:'future-contract',lcfs:true},
+  {id:'old',label:'Old',contractAddress:'old-contract',lcfs:true},
+  {id:'none',label:'No attempt',contractAddress:'none-contract',lcfs:true},
+ ];
+ const live=new Map([
+  ['recent',{ok:true,row:{snapshot:{fleetName:'Miner IMP-Krew -U-'}}}],
+ ]);
+ const attempts=[
+  {key:'blocked:recent:'+Math.floor((now-60_000)/1000)+':1',status:'blocked',detail:'Minimum ATLAS bid 16498.5 exceeds maximum 12000',updatedAt:'2026-09-27T07:59:00.000Z'},
+  {key:'future:'+(now+60_000),status:'submitted',detail:'future-signature',updatedAt:'2026-09-27T08:00:00.000Z'},
+  {key:'blocked:old:'+Math.floor((now-49*3600_000)/1000)+':1',status:'blocked',detail:'too old',updatedAt:'2026-09-25T07:00:00.000Z'},
+ ];
+ assert.equal(
+  context.RulesDisplay.lcfsOutcomeLines(entries,attempts,live,now).join('\n'),
+  'Miner IMP-Krew -U-: no LCFS bid sent — Minimum ATLAS bid 16498.5 exceeded maximum 12000',
+ );
+});
+
+test('LCFS report uses latest outcome for an ended reservation and accurate send wording', () => {
+ const now=Date.UTC(2026,8,27,8),end=now-1000;
+ const entries=[{id:'fleet',label:'Fallback label',contractAddress:'contract',lcfs:false}];
+ const live=new Map([['fleet',{ok:true,row:{snapshot:{fleetName:'Sunpaa'}}}]]);
+ const attempts=[
+  {key:'fleet:'+end,status:'started',detail:'preparing',updatedAt:'2026-09-27T07:59:40.000Z'},
+  {key:'fleet:'+end,status:'submitted',detail:'123456789ABCDEFG',updatedAt:'2026-09-27T07:59:55.000Z'},
+ ];
+ assert.equal(
+  context.RulesDisplay.lcfsOutcomeLines(entries,attempts,live,now).join('\n'),
+  'Sunpaa: LCFS bid sent — transaction 123456789A…',
+ );
+});

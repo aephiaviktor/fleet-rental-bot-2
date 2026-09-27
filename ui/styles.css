@@ -4,3 +4,4 @@
 #history-body tr.history-completed > td { background-color: rgba(100, 180, 245, .12); }
 #history-body .history-active .history-status-cell { color: #71e4a6; }
 #history-body .history-completed .history-status-cell { color: #9dd4ff; }
+.lcfs-outcome-note{margin:0;padding:.85rem 1rem;border-top:1px solid var(--border);color:var(--muted);white-space:pre-line}

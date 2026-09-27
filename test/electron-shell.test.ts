@@ -173,10 +173,11 @@ test('repeated nav clicks toggle the sidebar column picker', async () => {
   );
 });
 
-test('reservations panel always explains the latest LCFS attempt outcome', async () => {
-  const [html, renderer, preload, main] = await Promise.all([
+test('reservations panel reports only recent completed LCFS outcomes', async () => {
+  const [html, renderer, display, preload, main] = await Promise.all([
     readFile('ui/index.html', 'utf8'),
     readFile('ui/app.js', 'utf8'),
+    readFile('ui/rules-display.js', 'utf8'),
     readFile('electron/preload.cjs', 'utf8'),
     readFile('electron/main.cjs', 'utf8'),
   ]);
@@ -188,8 +189,11 @@ test('reservations panel always explains the latest LCFS attempt outcome', async
   assert.match(main, /ipcMain\.handle\('lcfs:state'/);
   assert.match(renderer, /renderLcfsOutcomes/);
   assert.match(renderer, /getLcfsState\(\)/);
-  assert.match(renderer, /LCFS bid successful/);
-  assert.match(renderer, /no LCFS bid sent/);
+  assert.match(renderer, /lcfsOutcomeLines/);
+  assert.ok(renderer.includes("lines.join('\\n')"));
+  assert.match(display, /LCFS bid sent/);
+  assert.match(display, /no LCFS bid sent/);
+  assert.doesNotMatch(renderer, /no LCFS attempt recorded yet/);
 });
 
 test('RPC Usage shows request telemetry instead of limiter settings', async () => {

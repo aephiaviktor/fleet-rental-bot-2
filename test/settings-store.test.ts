@@ -6,6 +6,7 @@ import test from 'node:test';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, validateSettings } from '../src/settings-store.js';
 
 const profile = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
+const competitor = 'YAJqXkPnL1RhudMERrUZ23ekVt891dL41GaYxcyZ5Bm';
 
 test('missing settings use the dedicated five request-per-second default', async () => {
   const root = await mkdtemp(join(tmpdir(), 'fleet-rental-settings-'));
@@ -47,4 +48,17 @@ test('settings persist neutral player profile and omit the obsolete faction-spec
   assert.equal(loaded.useRpcLimiter, false);
   assert.match(persisted, /"playerProfile":/);
   assert.doesNotMatch(persisted, /usturPlayerProfile/);
+});
+
+
+test('warm-up addresses accept comma-separated wallets, trim, validate, and deduplicate', () => {
+  const settings = validateSettings({
+    ...DEFAULT_SETTINGS,
+    warmUpAddresses: `  ${competitor}, ${profile}, ${competitor}  `,
+  } as unknown);
+  assert.deepEqual(settings.warmUpAddresses, [competitor, profile]);
+  assert.throws(
+    () => validateSettings({ ...DEFAULT_SETTINGS, warmUpAddresses: `${competitor}, invalid` } as unknown),
+    /Warm-up address 2.*valid Solana address/,
+  );
 });

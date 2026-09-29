@@ -4,6 +4,7 @@ import {
   appendTransactionMessageInstructions,
   blockhash,
   createKeyPairSignerFromBytes,
+  createNoopSigner,
   createSolanaRpc,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
@@ -20,6 +21,7 @@ import { planAtlasReservation, type AtlasReservationPlan } from './reservation-p
 import type { AppSettings } from './settings-store.js';
 import { resolveWalletOwnership } from './player-profile.js';
 import { buildUnsignedAtlasReservation, type UnsignedReservationInput } from './unsigned-reservation.js';
+import { rentalSdk } from './rental-sdk.js';
 
 const HELIUS_SENDER_ENDPOINT = 'https://sender.helius-rpc.com/fast';
 const HELIUS_TIP_ACCOUNT = '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE';
@@ -54,6 +56,15 @@ interface PreparedLcfsCandidate {
   fingerprint: string;
   wireTransaction: string;
   bidAtlas: number;
+  defender: string | null;
+}
+
+export interface WarmTransactionInput {
+  warmUpAddress: string;
+  bidAtlas: number;
+  inspected: { raw: ContractSnapshot; mapped: FleetContractSnapshot; plan: Extract<LcfsReservationPlan, { kind: 'ready' }> };
+  settings: AppSettings;
+  hotWalletSecret: string;
 }
 
 export interface LcfsDependencies {
@@ -66,6 +77,12 @@ export interface LcfsDependencies {
   now?: () => number;
   waitUntil?: (targetMs: number) => Promise<void>;
   validateAccess?: (force?: boolean) => Promise<unknown>;
+  getSolanaUnixTime?: (rpcUrl: string) => Promise<number>;
+  prepareWarmTransaction?: (input: WarmTransactionInput) => Promise<string>;
+  monitorAfterPrimary?: boolean;
+  monitorIntervalMs?: number;
+  onTiming?: (event: { phase: string; localMs: number; solanaUnixSeconds?: number; offsetMs: number; targetMs?: number }) => Promise<void> | void;
+  onSubmission?: (event: { lane: 'primary' | 'reactive' | 'warm'; status: 'submitted' | 'failed'; signature?: string; defender: string | null; bidAtlas: number; detail?: string }) => Promise<void> | void;
 }
 
 export function lcfsAttemptKey(entryId: string, activeRentalEndsAtMs: number): string {
@@ -84,6 +101,19 @@ export function lcfsSchedule(activeRentalEndsAtMs: number, configuredLeadTimeSec
 
 function roundedAtlas(value: number): number {
   return Number(value.toFixed(8));
+}
+
+export function calculateSolanaClockOffsetMs(localNowMs: number, solanaUnixSeconds: number): number {
+  return solanaUnixSeconds * 1_000 - Math.floor(localNowMs / 1_000) * 1_000;
+}
+
+export function calculateWarmUpBid(primaryBidAtlas: number, maximumBidAtlas: number):
+  | { kind: 'ready'; bidAtlas: number }
+  | { kind: 'blocked'; reason: string } {
+  const bidAtlas = Math.ceil(Number((primaryBidAtlas * 1.35).toFixed(8)));
+  return bidAtlas <= maximumBidAtlas
+    ? { kind: 'ready', bidAtlas }
+    : { kind: 'blocked', reason: `Warm-up bid ${bidAtlas} exceeds maximum ${maximumBidAtlas}` };
 }
 
 function roundedUpToWholeAtlas(value: number): number {
@@ -188,7 +218,7 @@ async function buildCandidate(
   const wireTransaction = await (dependencies.prepareTransaction ?? prepareLcfsTransaction)(
     built as Instruction[], settings, hotWalletSecret,
   );
-  return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction, bidAtlas: inspected.plan.bidAtlas };
+  return { fingerprint: candidateFingerprint(inspected.mapped, inspected.plan), wireTransaction, bidAtlas: inspected.plan.bidAtlas, defender: inspected.mapped.reservationDefender };
 }
 
 type CandidateRefreshResult =
@@ -218,6 +248,68 @@ async function prepareOrRefreshCandidate(
   return { kind: 'candidate', candidate: await buildCandidate(inspected, settings, hotWalletSecret, dependencies) };
 }
 
+const CLOCK_SYSVAR = 'SysvarC1ock11111111111111111111111111111111';
+
+async function readSolanaUnixTime(rpcUrl: string): Promise<number> {
+  const response = await createSolanaRpc(rpcUrl).getAccountInfo(address(CLOCK_SYSVAR), { encoding: 'base64', commitment: 'processed' }).send();
+  if (!response.value) throw new Error('Solana Clock sysvar is unavailable');
+  const bytes = Buffer.from(response.value.data[0], 'base64');
+  if (bytes.length < 40) throw new Error('Solana Clock sysvar is malformed');
+  return Number(bytes.readBigInt64LE(32));
+}
+
+async function loadMonitoredBundle(
+  base: ContractSnapshot,
+  rpcUrl: string,
+  nowMs: number,
+): Promise<{ raw: ContractSnapshot; mapped: FleetContractSnapshot }> {
+  const sdk = rentalSdk() as typeof import('@sly-rentals/core') & {
+    fetchRental: (rentalAddress: string, rpcUrl: string) => Promise<ContractSnapshot['queuedRental']>;
+    deriveQueuedRental: (contractAddress: string) => Promise<string>;
+  };
+  const queuedAddress = await sdk.deriveQueuedRental(base.contract.address);
+  const queuedRental = await sdk.fetchRental(queuedAddress, rpcUrl);
+  const partial = { ...base, queuedRental, nowSeconds: Math.floor(nowMs / 1_000) };
+  const minimumBid = sdk.computeMinimumBidFromSnapshot(partial);
+  const raw = { ...partial, minimumBid } as ContractSnapshot;
+  return { raw, mapped: mapContractSnapshot(raw) };
+}
+
+async function prepareWarmCandidate(
+  warmUpAddress: string,
+  bidAtlas: number,
+  inspected: WarmTransactionInput['inspected'],
+  settings: AppSettings,
+  hotWalletSecret: string,
+  dependencies: LcfsDependencies,
+): Promise<PreparedLcfsCandidate> {
+  if (dependencies.prepareWarmTransaction) {
+    return {
+      fingerprint: `warm:${warmUpAddress}:${bidAtlas}`,
+      wireTransaction: await dependencies.prepareWarmTransaction({ warmUpAddress, bidAtlas, inspected, settings, hotWalletSecret }),
+      bidAtlas,
+      defender: warmUpAddress,
+    };
+  }
+  if (!inspected.raw.queuedRental) throw new Error('Warm-up preparation requires a queued rental');
+  const signer = createNoopSigner(address(warmUpAddress));
+  const borrowerState = await (rentalSdk() as { deriveBorrowerState: (borrower: TransactionSigner) => Promise<string> }).deriveBorrowerState(signer);
+  const assumedSnapshot = {
+    ...inspected.raw,
+    queuedRental: {
+      ...inspected.raw.queuedRental,
+      data: { ...inspected.raw.queuedRental.data, borrower: signer.address, borrowerState: address(borrowerState) },
+    },
+  } as ContractSnapshot;
+  const plan = { ...inspected.plan, bidAtlas };
+  const built = await (dependencies.build ?? buildUnsignedAtlasReservation)({
+    plan, walletAddress: settings.walletAddress, challengerProfile: settings.playerProfile, rpcUrl: settings.rpcUrl, snapshot: assumedSnapshot,
+  });
+  if (!Array.isArray(built)) throw new Error('SDK did not return an instruction array');
+  const wireTransaction = await (dependencies.prepareTransaction ?? prepareLcfsTransaction)(built as Instruction[], settings, hotWalletSecret);
+  return { fingerprint: `warm:${warmUpAddress}:${bidAtlas}`, wireTransaction, bidAtlas, defender: warmUpAddress };
+}
+
 export async function executeLcfsAttempt(
   entry: FleetWatchEntry,
   settings: AppSettings,
@@ -237,56 +329,157 @@ export async function executeLcfsAttempt(
     const delayMs = targetMs - Date.now();
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   });
-  const waitForPhase = async (targetMs: number) => {
-    if (now() < targetMs) await waitUntil(targetMs);
-  };
   const schedule = lcfsSchedule(expectedActiveRentalEndsAtMs, settings.lcfsLeadTimeSeconds);
   const validateAccess = dependencies.validateAccess ?? (async () => undefined);
+  const fetchBundle = dependencies.fetchBundle ?? loadBundle;
+  const resolveOwnedWallets = dependencies.resolveOwnedWallets ?? resolveWalletOwnership;
+  const shouldMeasureClock = Boolean(dependencies.getSolanaUnixTime) || dependencies.now === undefined;
+  const getSolanaUnixTime = dependencies.getSolanaUnixTime ?? readSolanaUnixTime;
+  let clockOffsetMs = 0;
+  const alignClock = async (phase: string, targetMs?: number) => {
+    const requestStartedAtMs = now();
+    let localMs = requestStartedAtMs;
+    if (shouldMeasureClock) {
+      try {
+        const solanaUnixSeconds = await getSolanaUnixTime(settings.rpcUrl);
+        localMs = (requestStartedAtMs + now()) / 2;
+        clockOffsetMs = calculateSolanaClockOffsetMs(localMs, solanaUnixSeconds);
+        await dependencies.onTiming?.({ phase, localMs, solanaUnixSeconds, offsetMs: clockOffsetMs, targetMs });
+        return;
+      } catch {
+        clockOffsetMs = 0;
+      }
+    }
+    await dependencies.onTiming?.({ phase, localMs, offsetMs: clockOffsetMs, targetMs });
+  };
+  const chainNow = () => now() + clockOffsetMs;
+  const waitForPhase = async (phase: string, targetMs: number) => {
+    await alignClock(phase, targetMs);
+    const localTargetMs = targetMs - clockOffsetMs;
+    if (now() < localTargetMs) await waitUntil(localTargetMs);
+  };
 
   const candidateState: { value: PreparedLcfsCandidate | null } = { value: null };
   const refreshCandidate = async (forceAccessCheck: boolean): Promise<Extract<LcfsAttemptResult, { kind: 'blocked' }> | null> => {
     await validateAccess(forceAccessCheck);
     const refreshed = await prepareOrRefreshCandidate(
-      candidateState.value, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, now(),
+      candidateState.value, entry, settings, hotWalletSecret, expectedActiveRentalEndsAtMs, dependencies, chainNow(),
     );
     if (refreshed.kind === 'blocked') return refreshed;
     candidateState.value = refreshed.candidate;
     return null;
   };
 
-  await waitForPhase(schedule.prepareAtMs);
+  await waitForPhase('prepare', schedule.prepareAtMs);
   let blocked = await refreshCandidate(false);
   if (blocked) return blocked;
-
-  await waitForPhase(schedule.refreshAtMs);
+  await waitForPhase('refresh', schedule.refreshAtMs);
   blocked = await refreshCandidate(true);
   if (blocked) return blocked;
-
-  await waitForPhase(schedule.finalCheckAtMs);
+  await waitForPhase('final-check', schedule.finalCheckAtMs);
   blocked = await refreshCandidate(false);
   if (blocked) return blocked;
+  await waitForPhase('send', schedule.sendAtMs);
+  if (chainNow() >= expectedActiveRentalEndsAtMs) return { kind: 'blocked', reason: 'Active rental ended while the LCFS transaction was being prepared' };
 
-  await waitForPhase(schedule.sendAtMs);
-  if (now() >= expectedActiveRentalEndsAtMs) {
-    return { kind: 'blocked', reason: 'Active rental ended while the LCFS transaction was being prepared' };
+  await validateAccess(false);
+  const sendInspection = await inspectFreshState(entry, settings, expectedActiveRentalEndsAtMs, chainNow(), fetchBundle, resolveOwnedWallets);
+  if ('kind' in sendInspection) return sendInspection;
+  if (sendInspection.plan.watchOnly) {
+    candidateState.value = null;
+  } else {
+    const sendFingerprint = candidateFingerprint(sendInspection.mapped, sendInspection.plan);
+    candidateState.value = candidateState.value?.fingerprint === sendFingerprint
+      ? candidateState.value
+      : await buildCandidate(sendInspection, settings, hotWalletSecret, dependencies);
   }
-  // Re-fetch at the actual send deadline. A challenger can appear in the few
-  // seconds after the final check, which is exactly the gap LCFS must cover.
-  blocked = await refreshCandidate(false);
-  if (blocked) return blocked;
-  if (now() >= expectedActiveRentalEndsAtMs) {
-    return { kind: 'blocked', reason: 'Active rental ended during the final LCFS state check' };
+  if (chainNow() >= expectedActiveRentalEndsAtMs) return { kind: 'blocked', reason: 'Active rental ended during the final LCFS state check' };
+
+  const submissions: Array<{ lane: 'primary' | 'reactive' | 'warm'; signature: string; defender: string | null; bidAtlas: number }> = [];
+  const submitCandidate = async (candidate: PreparedLcfsCandidate, lane: 'primary' | 'reactive' | 'warm', tolerateFailure: boolean) => {
+    try {
+      await dependencies.recordIntent?.(candidate.wireTransaction, candidate.bidAtlas);
+      const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidate.wireTransaction);
+      submissions.push({ lane, signature, defender: candidate.defender, bidAtlas: candidate.bidAtlas });
+      await dependencies.onSubmission?.({ lane, status: 'submitted', signature, defender: candidate.defender, bidAtlas: candidate.bidAtlas });
+      return signature;
+    } catch (error) {
+      await dependencies.onSubmission?.({ lane, status: 'failed', defender: candidate.defender, bidAtlas: candidate.bidAtlas, detail: error instanceof Error ? error.message : String(error) });
+      if (!tolerateFailure) throw error;
+      return null;
+    }
+  };
+
+  let primarySignature: string | null = null;
+  if (candidateState.value) primarySignature = await submitCandidate(candidateState.value, 'primary', false);
+  const monitorClosingWindow = dependencies.monitorAfterPrimary ?? dependencies.now === undefined;
+  if (!monitorClosingWindow) {
+    if (!primarySignature) return { kind: 'blocked', reason: 'self-defender at send time: no challenger appeared' };
+    return { kind: 'submitted', signature: primarySignature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
   }
-  if (!candidateState.value) {
-    // We were still the reservation defender at the send deadline and no real
-    // challenger replaced us, so no transaction is needed and none is sent.
-    return { kind: 'blocked', reason: 'self-defender at send time: no challenger appeared' };
+
+  const warmAtMs = expectedActiveRentalEndsAtMs - 2_000;
+  const warmBaseSource = candidateState.value?.bidAtlas ?? sendInspection.mapped.reservationBidAtlas;
+  const warmBase = warmBaseSource == null ? null : calculateWarmUpBid(warmBaseSource, entry.maximumReservationBidAtlas);
+  const warmCandidates = new Map<string, Promise<PreparedLcfsCandidate | null>>();
+  const prepareWarm = (warmUpAddress: string, bidAtlas: number, inspected = sendInspection) => {
+    const promise = prepareWarmCandidate(warmUpAddress, bidAtlas, inspected, settings, hotWalletSecret, dependencies)
+      .catch(() => null);
+    warmCandidates.set(warmUpAddress, promise);
+  };
+  if (warmBase?.kind === 'ready') for (const warmUpAddress of settings.warmUpAddresses) prepareWarm(warmUpAddress, warmBase.bidAtlas);
+
+  const owned = await resolveOwnedWallets(settings, settings.rpcUrl);
+  const ownedAddresses = new Set(Array.isArray(owned) ? owned : owned.addresses);
+  const warmSet = new Set(settings.warmUpAddresses);
+  const fetchMonitoredBundle = dependencies.fetchBundle
+    ? () => fetchBundle(entry.contractAddress, settings.rpcUrl)
+    : () => loadMonitoredBundle(sendInspection.raw, settings.rpcUrl, chainNow());
+  const handledFingerprints = new Set<string>();
+  let warmSent = false;
+  const pollMs = Math.max(100, dependencies.monitorIntervalMs ?? 250);
+  while (chainNow() < expectedActiveRentalEndsAtMs) {
+    const nextChainMs = Math.min(expectedActiveRentalEndsAtMs, warmSent ? chainNow() + pollMs : Math.min(warmAtMs, chainNow() + pollMs));
+    if (nextChainMs > chainNow()) await waitUntil(nextChainMs - clockOffsetMs);
+    if (!warmSent && chainNow() >= warmAtMs) {
+      await alignClock('warm-send', warmAtMs);
+      if (chainNow() < warmAtMs) await waitUntil(warmAtMs - clockOffsetMs);
+      const prepared = await Promise.all([...warmCandidates.values()]);
+      await Promise.all(prepared.filter((candidate): candidate is PreparedLcfsCandidate => candidate !== null)
+        .map((candidate) => submitCandidate(candidate, 'warm', true)));
+      warmSent = true;
+    }
+    if (chainNow() >= expectedActiveRentalEndsAtMs) break;
+    const observed = await fetchMonitoredBundle();
+    if (observed.mapped.activeRentalEndsAtMs !== expectedActiveRentalEndsAtMs) break;
+    const observedPlan = planLcfsReservation(
+      entry,
+      observed.mapped,
+      deriveWalletPosition(observed.mapped, owned),
+      chainNow(),
+    );
+    if (observedPlan.kind === 'blocked') continue;
+    const inspected = { ...observed, plan: observedPlan };
+    const defender = inspected.mapped.reservationDefender;
+    if (!defender || ownedAddresses.has(defender) || inspected.plan.watchOnly) continue;
+    const fingerprint = candidateFingerprint(inspected.mapped, inspected.plan);
+    if (handledFingerprints.has(fingerprint)) continue;
+    handledFingerprints.add(fingerprint);
+    if (!warmSent && warmSet.has(defender)) {
+      if (warmBase?.kind === 'ready') {
+        const liveBid = roundedUpToWholeAtlas(Math.max(warmBase.bidAtlas, (inspected.mapped.reservationBidAtlas ?? 0) * 1.1));
+        if (liveBid <= entry.maximumReservationBidAtlas) prepareWarm(defender, liveBid, inspected);
+      }
+      continue;
+    }
+    const reactive = await buildCandidate(inspected, settings, hotWalletSecret, dependencies);
+    await submitCandidate(reactive, 'reactive', true);
   }
-  await dependencies.recordIntent?.(candidateState.value.wireTransaction, candidateState.value.bidAtlas);
-  const signature = await (dependencies.submitPrepared ?? submitPreparedToHelius)(candidateState.value.wireTransaction);
-  return { kind: 'submitted', signature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
+
+  const firstSignature = primarySignature ?? submissions[0]?.signature;
+  if (!firstSignature) return { kind: 'blocked', reason: 'No LCFS transaction was submitted before the rental ended' };
+  return { kind: 'submitted', signature: firstSignature, attemptKey: lcfsAttemptKey(entry.id, expectedActiveRentalEndsAtMs) };
 }
-
 function decodeBase58(value: string): Uint8Array {
   const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   let number = 0n;

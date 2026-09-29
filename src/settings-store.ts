@@ -9,6 +9,7 @@ export interface AppSettings {
   /** Legacy flag retained only for settings-file compatibility; the general limiter is no longer used. */
   useRpcLimiter: boolean;
   rpcUrl: string;
+  warmUpAddresses: string[];
   rpcRequestsPerSecond: number;
   /** Legacy fixed interval retained only for settings-file compatibility; adaptive scheduling is authoritative. */
   refreshIntervalSeconds: number;
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   playerProfile: '',
   useRpcLimiter: false,
   rpcUrl: 'https://api.mainnet-beta.solana.com',
+  warmUpAddresses: [],
   rpcRequestsPerSecond: 5,
   refreshIntervalSeconds: 60,
   useHeliusSender: false,
@@ -46,6 +48,27 @@ export function validateSettings(value: unknown): AppSettings {
   let url: URL;
   try { url = new URL(candidate.rpcUrl); } catch { throw new Error('RPC URL must be a valid URL'); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('RPC URL must use HTTP or HTTPS');
+  const rawWarmUpAddresses: unknown = (candidate as { warmUpAddresses?: unknown }).warmUpAddresses ?? [];
+  if (!Array.isArray(rawWarmUpAddresses) && typeof rawWarmUpAddresses !== 'string') {
+    throw new Error('Warm-up addresses must be a comma-separated string or an array');
+  }
+  const warmUpValues: unknown[] = Array.isArray(rawWarmUpAddresses)
+    ? rawWarmUpAddresses
+    : rawWarmUpAddresses.split(',');
+  const warmUpAddresses: string[] = [];
+  const seenWarmUpAddresses = new Set<string>();
+  for (const [index, rawAddress] of warmUpValues.entries()) {
+    if (typeof rawAddress !== 'string') throw new Error(`Warm-up address ${index + 1} must be a string`);
+    const trimmed = rawAddress.trim();
+    if (!trimmed) continue;
+    let normalized: string;
+    try { normalized = requireSolanaAddress(trimmed, `Warm-up address ${index + 1}`); }
+    catch (error) { throw new Error(`Warm-up address ${index + 1} must be a valid Solana address: ${(error as Error).message}`); }
+    if (!seenWarmUpAddresses.has(normalized)) {
+      seenWarmUpAddresses.add(normalized);
+      warmUpAddresses.push(normalized);
+    }
+  }
   const aephiaApiKey = candidate.aephiaApiKey ?? '';
   if (typeof aephiaApiKey !== 'string') throw new Error('Aephia API key must be a string');
   const legacyProfile = candidate.usturPlayerProfile ?? candidate.challengerProfileAddress ?? '';
@@ -86,6 +109,7 @@ export function validateSettings(value: unknown): AppSettings {
     playerProfile: normalizedProfile,
     useRpcLimiter: false,
     rpcUrl: candidate.rpcUrl,
+    warmUpAddresses,
     rpcRequestsPerSecond,
     refreshIntervalSeconds: refreshIntervalSeconds!,
     useHeliusSender,

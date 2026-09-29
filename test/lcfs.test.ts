@@ -4,6 +4,8 @@ import test from 'node:test';
 import { AccountRole, address, createNoopSigner, type Instruction } from '@solana/kit';
 import type { FleetContractSnapshot, FleetWatchEntry, WalletPosition } from '../src/model.js';
 import {
+  calculateSolanaClockOffsetMs,
+  calculateWarmUpBid,
   evaluateLcfsEligibility,
   executeLcfsAttempt,
   lcfsAttemptKey,
@@ -398,9 +400,95 @@ test('Settings exposes LCFS lead time under the Helius section', async () => {
     readFile(new URL('../../src/lcfs.ts', import.meta.url), 'utf8'),
   ]);
   assert.match(html, /id="settings-lcfs-lead-time"[^>]*min="5"/);
+  const rpcIndex = html.indexOf('id="settings-rpc"');
+  const warmIndex = html.indexOf('id="settings-warm-up-addresses"');
+  const senderIndex = html.indexOf('<h3>Helius Sender</h3>');
+  assert.ok(rpcIndex >= 0 && rpcIndex < warmIndex && warmIndex < senderIndex);
   assert.match(html, /T-30.*T-10.*T-5/);
   assert.match(renderer, /lcfsLeadTimeSeconds/);
   assert.match(main, /decision\.prepareAtMs/);
   assert.match(main, /decision\.sendAtMs/);
   assert.doesNotMatch(lcfs, /simulateTransaction/);
+});
+
+
+test('LCFS aligns local whole-second scheduling to the observed Solana clock', () => {
+  assert.equal(calculateSolanaClockOffsetMs(1_790_606_460_250, 1_790_606_459), -1_000);
+  assert.equal(calculateSolanaClockOffsetMs(1_790_606_460_950, 1_790_606_460), 0);
+  assert.equal(calculateSolanaClockOffsetMs(1_790_606_459_050, 1_790_606_460), 1_000);
+});
+
+test('warm-up bids use 135% of the T-5 primary and fail closed above the fleet cap', () => {
+  assert.deepEqual(calculateWarmUpBid(5_306, 12_000), { kind: 'ready', bidAtlas: 7_164 });
+  assert.deepEqual(calculateWarmUpBid(10_000, 12_000), {
+    kind: 'blocked',
+    reason: 'Warm-up bid 13500 exceeds maximum 12000',
+  });
+});
+
+
+test('LCFS shifts every phase to the observed Solana whole-second clock', async () => {
+  let nowMs = 60_250;
+  const waits: number[] = [];
+  const phaseFetches: number[] = [];
+  const live = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationBidAtlas: 10, minimumTakeoverBidAtlas: 11 };
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 100 },
+    { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      now: () => nowMs,
+      waitUntil: async target => { waits.push(target); nowMs = target; },
+      getSolanaUnixTime: async () => Math.floor(nowMs / 1_000) - 1,
+      resolveOwnedWallets: async () => [],
+      fetchBundle: async () => { phaseFetches.push(nowMs); return { raw: {} as never, mapped: live }; },
+      build: async () => [],
+      prepareTransaction: async () => 'candidate',
+      submitPrepared: async () => 'signature',
+      validateAccess: async () => {},
+      monitorAfterPrimary: false,
+    }, 100_000,
+  );
+  assert.equal(result.kind, 'submitted');
+  assert.deepEqual(waits, [71_000, 91_000, 94_000, 96_000]);
+  assert.deepEqual(phaseFetches, waits);
+});
+
+test('LCFS monitors after T-5, defers configured warm defenders to T-2, and reacts to strangers', async () => {
+  let nowMs = 60_000;
+  const warmA = 'YAJqXkPnL1RhudMERrUZ23ekVt891dL41GaYxcyZ5Bm';
+  const warmB = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
+  const self = 'my-wallet';
+  const primary = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'initial', reservationBidAtlas: 4_823, minimumTakeoverBidAtlas: 5_306 };
+  const warm = { ...primary, reservationDefender: warmA, reservationBidAtlas: 5_857, minimumTakeoverBidAtlas: 6_442.7 };
+  const stranger = { ...primary, reservationDefender: 'stranger', reservationBidAtlas: 6_000, minimumTakeoverBidAtlas: 6_600 };
+  const phaseSnapshots = [primary, primary, primary, primary];
+  const monitorSnapshots = [warm, warm, stranger, { ...stranger, reservationDefender: self, reservationBidAtlas: 6_600 }];
+  const submissions: string[] = [];
+  const warmBuilds: Array<[string, number]> = [];
+  const result = await executeLcfsAttempt(
+    { ...entry, maximumReservationBidAtlas: 12_000 },
+    { ...DEFAULT_SETTINGS, warmUpAddresses: [warmA, warmB], useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
+    'stored-secret', undefined, {
+      now: () => nowMs,
+      waitUntil: async target => { nowMs = target; },
+      resolveOwnedWallets: async () => [self],
+      fetchBundle: async () => ({ raw: { queuedRental: { data: {} } } as never, mapped: phaseSnapshots.length ? phaseSnapshots.shift()! : monitorSnapshots.shift()! }),
+      build: async ({ plan }) => [plan.kind === 'ready' ? plan.bidAtlas : -1] as never,
+      prepareTransaction: async instructions => `normal-${String(instructions[0])}`,
+      prepareWarmTransaction: async ({ warmUpAddress, bidAtlas }) => { warmBuilds.push([warmUpAddress, bidAtlas]); return `warm-${warmUpAddress}-${bidAtlas}`; },
+      recordIntent: async () => {},
+      submitPrepared: async candidate => { submissions.push(candidate); return `sig-${submissions.length}`; },
+      validateAccess: async () => {},
+      monitorAfterPrimary: true,
+      monitorIntervalMs: 1_000,
+    }, 100_000,
+  );
+  assert.equal(result.kind, 'submitted');
+  assert.deepEqual(submissions, [
+    'normal-5306',
+    `warm-${warmA}-7164`,
+    `warm-${warmB}-7164`,
+    'normal-6600',
+  ]);
+  assert.ok(warmBuilds.some(([address, bid]) => address === warmA && bid === 7_164));
 });

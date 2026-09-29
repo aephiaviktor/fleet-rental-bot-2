@@ -271,6 +271,17 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
         const outcome = await withUrgentRpcPriority(sharedDatabasePath(), () => executeLcfsAttempt(
           latestEntry, latestSettings, latestSettings.hotWalletSecret, undefined, {
             validateAccess: (force = false) => requireAephiaAccess(force),
+            onTiming: async event => {
+              await recordLcfsAttempt(`timing:${key}:${event.phase}`, 'timing', JSON.stringify(event));
+            },
+            onSubmission: async event => {
+              if (event.lane === 'primary' && event.status === 'submitted') return;
+              await recordLcfsAttempt(
+                `submission:${key}:${event.lane}:${Date.now()}`,
+                event.status,
+                JSON.stringify(event),
+              );
+            },
             recordIntent: async (wire, amount) => {
               const { getTransactionDecoder, getSignatureFromTransaction } = await import('@solana/kit');
               const signature = getSignatureFromTransaction(getTransactionDecoder().decode(Buffer.from(wire, 'base64')));

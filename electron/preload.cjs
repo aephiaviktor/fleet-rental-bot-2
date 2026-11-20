@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   getRpcLimiterStatus: () => ipcRenderer.invoke('rpc-limiter:status'),
   getRpcUsageDay: (utcDate) => ipcRenderer.invoke('rpc-usage:day', utcDate),
   loadCachedWatchlist: () => ipcRenderer.invoke('watchlist:cached'),
+  refreshFunding: () => ipcRenderer.invoke('funding:refresh'),
   refreshWatchlist: (entryIds) => ipcRenderer.invoke('watchlist:refresh', entryIds),
   getNextRefreshDelay: (endTimes) => ipcRenderer.invoke('refresh:next-delay', endTimes),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),

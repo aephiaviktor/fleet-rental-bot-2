@@ -67,3 +67,17 @@ test('does not use cache belonging to an old contract address', async () => {
   );
   assert.deepEqual(merged, [{ id: 'fleet', ok: false, error: 'offline' }]);
 });
+
+test('one shared balance read funds all rows and a failed read gives Unknown without losing fleet data', async () => {
+  for (const unavailable of [false, true]) {
+    let reads = 0;
+    const results = await refreshWatchlist([entry('one'), entry('two')], DEFAULT_SETTINGS, async () => snapshot, 123,
+      async () => ({ status: 'known', addresses: [] }) as never,
+      async () => { reads++; if (unavailable) throw new Error('offline'); return 180; });
+    assert.equal(reads, 1);
+    for (const result of results) {
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(result.row.funding?.status, unavailable ? 'unknown' : 'ready');
+    }
+  }
+});

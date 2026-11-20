@@ -1,3 +1,4 @@
+import { estimateFunding, loadAtlasBalance } from './funding.js';
 import type { AppSettings } from './settings-store.js';
 import type { CachedFleetRow } from './fleet-database.js';
 import type { FleetContractSnapshot, FleetTableRow, FleetWatchEntry } from './model.js';
@@ -40,12 +41,13 @@ export async function refreshWatchlist(
   loader: SnapshotLoader = loadContractSnapshot,
   nowMs = Date.now(),
   resolveOwnership: typeof resolveWalletOwnership = resolveWalletOwnership,
+  loadBalance: typeof loadAtlasBalance = loadAtlasBalance,
 ): Promise<RefreshResult[]> {
   const enabled = entries.filter((entry) => entry.enabled);
   const results: RefreshResult[] = [];
   const concurrency = 3;
   let cursor = 0;
-  const ownership = await resolveOwnership(settings, settings.rpcUrl);
+  const [ownership, available] = await Promise.all([resolveOwnership(settings, settings.rpcUrl), loadBalance(settings.walletAddress, settings.rpcUrl).catch(() => null)]);
 
   async function worker(): Promise<void> {
     while (cursor < enabled.length) {
@@ -53,7 +55,7 @@ export async function refreshWatchlist(
       try {
         const snapshot = await loader(entry.contractAddress, settings.rpcUrl);
         const position = deriveWalletPosition(snapshot, ownership);
-        results.push({ id: entry.id, ok: true, row: buildFleetTableRow(entry, snapshot, position, nowMs), source: 'live', fetchedAtMs: nowMs });
+        results.push({ id: entry.id, ok: true, row: { ...buildFleetTableRow(entry, snapshot, position, nowMs), funding: estimateFunding(entry, snapshot, available, nowMs) }, source: 'live', fetchedAtMs: nowMs });
       } catch (error) {
         results.push({ id: entry.id, ok: false, error: error instanceof Error ? error.message : String(error) });
       }

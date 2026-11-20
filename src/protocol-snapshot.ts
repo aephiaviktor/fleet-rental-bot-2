@@ -44,11 +44,12 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
 
   return {
     fleetName,
-    reservationsAllowed: config.reservationsEnabled && !contract.reservationsDisabled,
+    reservationsAllowed: config.reservationsEnabled && !contract.reservationsDisabled && !contract.toClose,
     minimumDurationSeconds: Number(contract.durationMinSeconds),
     maximumDurationSeconds: Number(contract.durationMaxSeconds),
     cancelDelaySeconds: contract.cancelDelayMin == null ? null : Number(contract.cancelDelayMin),
     rentalRateAtlasPerDay: decimalAmount(BigInt(snapshot.effectiveRate), atlasFactor),
+    activeRentalIdentity: active ? `${snapshot.activeRental?.address}:${active.borrower}:${active.startTime}:${active.endTime}` : undefined,
     activeRentalEndsAtMs: active ? unixSecondsToMs(BigInt(active.endTime)) : null,
     reservationCurrency,
     reservationDefender: queued ? queued.borrower.toString() : null,

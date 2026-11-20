@@ -32,6 +32,7 @@ export interface FleetContractSnapshot {
   cancelDelaySeconds?: number | null;
   rentalRateAtlasPerDay: number;
   activeRentalEndsAtMs: number | null;
+  activeRentalIdentity?: string;
   reservationCurrency: ReservationCurrency | null;
   reservationDefender: string | null;
   reservationBidAtlas: number | null;
@@ -49,6 +50,7 @@ export interface FleetContractSnapshot {
 }
 
 export interface FleetTableRow {
+  funding?: import('./funding.js').FundingEstimate;
   entry: FleetWatchEntry;
   snapshot: FleetContractSnapshot;
   position: WalletPosition;

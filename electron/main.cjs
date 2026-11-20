@@ -200,6 +200,10 @@ async function recordLcfsAttempt(key, status, detail = '') {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
     await fs.rename(temporaryPath, filePath);
+    if (!key.startsWith('blocked:')) {
+      const { appendLcfsDiagnostic } = await domainModule('lcfs-diagnostics');
+      await appendLcfsDiagnostic(app.getPath('userData'), { instance: INSTANCE.instance, version: app.getVersion(), key, status, detail }).catch(() => {});
+    }
     recorded = true;
   });
   await lcfsStateWrite;
@@ -275,12 +279,16 @@ async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntry
               await recordLcfsAttempt(`timing:${key}:${event.phase}`, 'timing', JSON.stringify(event));
             },
             onSubmission: async event => {
-              if (event.lane === 'primary' && event.status === 'submitted') return;
               await recordLcfsAttempt(
                 `submission:${key}:${event.lane}:${Date.now()}`,
                 event.status,
                 JSON.stringify(event),
               );
+              if (event.status === 'submitted' && event.signature) {
+                const { observeLcfsConfirmation } = await domainModule('lcfs-diagnostics');
+                void observeLcfsConfirmation(latestSettings.rpcUrl, event.signature, event.localMs ?? Date.now(),
+                  result => recordLcfsAttempt(`confirmation:${key}:${event.signature}`, result.status, JSON.stringify(result))).catch(() => {});
+              }
             },
             recordIntent: async (wire, amount) => {
               const { getTransactionDecoder, getSignatureFromTransaction } = await import('@solana/kit');
@@ -665,6 +673,22 @@ ipcMain.handle('history:load', async (_event, refresh = false) => {
     fleetName: names.get(row.contract) || row.contract,
     walletLabel: row.borrower === settings.walletAddress ? 'Bot' : row.borrower===roles.main ? 'Main' : 'Other',
   })), error, configured: Boolean(settings.playerProfile) };
+});
+
+ipcMain.handle('funding:refresh', async () => {
+  await requireAephiaAccess();
+  const [{ loadWatchlist }, { loadCachedRows }, { loadAtlasBalance, estimateFunding }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('fleet-database'), domainModule('funding'),
+  ]);
+  const [watchlist, settings] = await Promise.all([loadWatchlist(watchlistPath()), loadRuntimeSettings()]);
+  const available = await loadAtlasBalance(settings.walletAddress, settings.rpcUrl);
+  const cached = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance).map(item => [item.row.entry.id, item.row]));
+  return watchlist.entries.filter(entry => entry.enabled).flatMap(entry => {
+    const row = cached.get(entry.id);
+    if (!row || row.entry.contractAddress !== entry.contractAddress) return [];
+    return [{ id: entry.id, contractAddress: entry.contractAddress, requestedDurationSeconds: entry.requestedDurationSeconds,
+      lcfs: entry.lcfs, funding: estimateFunding(entry, row.snapshot, available) }];
+  });
 });
 
 ipcMain.handle('watchlist:refresh', async (_event, entryIds) => {

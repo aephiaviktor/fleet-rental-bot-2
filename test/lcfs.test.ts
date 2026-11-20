@@ -114,6 +114,8 @@ test('LCFS watch stands down at send time and submits nothing when no challenger
     { ...entry, maximumReservationBidAtlas: 12_000 },
     { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
     'stored-secret', undefined, {
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => ['my-wallet'],
       now: () => nowMs,
       waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
@@ -146,10 +148,12 @@ test('LCFS watch becomes a real counter-bid when a stranger outbids before send'
     { ...entry, maximumReservationBidAtlas: 12_000 },
     { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
     'stored-secret', undefined, {
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => ['my-wallet'],
       now: () => nowMs,
       waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
-      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.length > 1 ? snapshots.shift()! : snapshots[0] }),
       build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
       prepareTransaction: async () => `candidate-${preparedBids.length}`,
       recordIntent: async (candidate, amount) => { intents.push([candidate, amount]); },
@@ -174,10 +178,12 @@ test('LCFS discards a prepared counter-bid if our wallet regains the top spot', 
     { ...entry, maximumReservationBidAtlas: 12_000 },
     { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
     'stored-secret', undefined, {
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => ['my-wallet'],
       now: () => nowMs,
       waitUntil: async (targetMs) => { nowMs = targetMs; },
-      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+      fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.length > 1 ? snapshots.shift()! : snapshots[0] }),
       build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
       prepareTransaction: async () => 'stale-candidate',
       submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
@@ -202,10 +208,12 @@ test('LCFS re-checks at the send deadline and catches a challenger arriving afte
     { ...entry, maximumReservationBidAtlas: 12_000 },
     { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
     'stored-secret', undefined, {
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => ['my-wallet'],
       now: () => nowMs,
       waitUntil: async (targetMs) => { nowMs = targetMs; },
-      fetchBundle: async () => { fetchTimes.push(nowMs); return { raw: {} as never, mapped: snapshots.shift()! }; },
+      fetchBundle: async () => { fetchTimes.push(nowMs); return { raw: {} as never, mapped: snapshots.length > 1 ? snapshots.shift()! : snapshots[0] }; },
       build: async ({ plan }) => { assert.equal(plan.kind, 'ready'); assert.equal(plan.bidAtlas, 3_124); return []; },
       prepareTransaction: async () => 'send-time-candidate',
       submitPrepared: async (candidate) => { sentCandidates.push(candidate); return 'signature'; },
@@ -214,7 +222,7 @@ test('LCFS re-checks at the send deadline and catches a challenger arriving afte
     100_000,
   );
   assert.equal(result.kind, 'submitted');
-  assert.deepEqual(fetchTimes, [70_000, 90_000, 93_000, 95_000]);
+  assert.deepEqual(fetchTimes, [70_000, 90_000, 93_000, 95_000, 95_000]);
   assert.deepEqual(sentCandidates, ['send-time-candidate']);
 });
 
@@ -311,10 +319,12 @@ test('LCFS prepares at T-30, rebuilds changed state, checks again, and sends by 
     changed,
   ];
   const result = await executeLcfsAttempt({ ...entry, maximumReservationBidAtlas: 20_000 }, { ...DEFAULT_SETTINGS, useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' }, 'stored-secret', undefined, {
+    loadBalance: async () => 1_000_000,
+    recordPendingFunding: () => {},
     resolveOwnedWallets: async () => [],
     now: () => nowMs,
     waitUntil: async (targetMs) => { waits.push(targetMs); nowMs = targetMs; },
-    fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.shift()! }),
+    fetchBundle: async () => ({ raw: {} as never, mapped: snapshots.length > 1 ? snapshots.shift()! : snapshots[0] }),
     build: async ({ plan }) => { preparedBids.push(plan.kind === 'ready' ? plan.bidAtlas : -1); return []; },
     prepareTransaction: async () => `candidate-${preparedBids.length}`,
     recordIntent: async (candidate, amount) => { intents.push([candidate, amount]); },
@@ -348,6 +358,8 @@ test('LCFS blocks when the re-fetched rental end no longer matches the scheduled
     'stored-secret',
     undefined,
     {
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => [],
       now: () => 5_000,
       waitUntil: async () => {},
@@ -439,6 +451,8 @@ test('LCFS shifts every phase to the observed Solana whole-second clock', async 
       now: () => nowMs,
       waitUntil: async target => { waits.push(target); nowMs = target; },
       getSolanaUnixTime: async () => Math.floor(nowMs / 1_000) - 1,
+      loadBalance: async () => 1_000_000,
+      recordPendingFunding: () => {},
       resolveOwnedWallets: async () => [],
       fetchBundle: async () => { phaseFetches.push(nowMs); return { raw: {} as never, mapped: live }; },
       build: async () => [],
@@ -450,45 +464,127 @@ test('LCFS shifts every phase to the observed Solana whole-second clock', async 
   );
   assert.equal(result.kind, 'submitted');
   assert.deepEqual(waits, [71_000, 91_000, 94_000, 96_000]);
-  assert.deepEqual(phaseFetches, waits);
+  assert.deepEqual(phaseFetches, [...waits, waits.at(-1)]);
 });
 
-test('LCFS monitors after T-5, defers configured warm defenders to T-2, and reacts to strangers', async () => {
-  let nowMs = 60_000;
-  const warmA = 'YAJqXkPnL1RhudMERrUZ23ekVt891dL41GaYxcyZ5Bm';
-  const warmB = 'Erdrp29yxiCVyYJgJtZz2ZYAbxiDV5UUDLNEZJsxSL7';
-  const self = 'my-wallet';
-  const primary = { ...snapshot, activeRentalEndsAtMs: 100_000, reservationDefender: 'initial', reservationBidAtlas: 4_823, minimumTakeoverBidAtlas: 5_306 };
-  const warm = { ...primary, reservationDefender: warmA, reservationBidAtlas: 5_857, minimumTakeoverBidAtlas: 6_442.7 };
-  const stranger = { ...primary, reservationDefender: 'stranger', reservationBidAtlas: 6_000, minimumTakeoverBidAtlas: 6_600 };
-  const phaseSnapshots = [primary, primary, primary, primary];
-  const monitorSnapshots = [warm, warm, stranger, { ...stranger, reservationDefender: self, reservationBidAtlas: 6_600 }];
-  const submissions: string[] = [];
-  const warmBuilds: Array<[string, number]> = [];
-  const result = await executeLcfsAttempt(
-    { ...entry, maximumReservationBidAtlas: 12_000 },
-    { ...DEFAULT_SETTINGS, warmUpAddresses: [warmA, warmB], useHeliusSender: true, playerProfile: 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7' },
-    'stored-secret', undefined, {
-      now: () => nowMs,
-      waitUntil: async target => { nowMs = target; },
-      resolveOwnedWallets: async () => [self],
-      fetchBundle: async () => ({ raw: { queuedRental: { data: {} } } as never, mapped: phaseSnapshots.length ? phaseSnapshots.shift()! : monitorSnapshots.shift()! }),
-      build: async ({ plan }) => [plan.kind === 'ready' ? plan.bidAtlas : -1] as never,
-      prepareTransaction: async instructions => `normal-${String(instructions[0])}`,
-      prepareWarmTransaction: async ({ warmUpAddress, bidAtlas }) => { warmBuilds.push([warmUpAddress, bidAtlas]); return `warm-${warmUpAddress}-${bidAtlas}`; },
-      recordIntent: async () => {},
-      submitPrepared: async candidate => { submissions.push(candidate); return `sig-${submissions.length}`; },
-      validateAccess: async () => {},
-      monitorAfterPrimary: true,
-      monitorIntervalMs: 1_000,
-    }, 100_000,
-  );
-  assert.equal(result.kind, 'submitted');
-  assert.deepEqual(submissions, [
-    'normal-5306',
-    `warm-${warmA}-7164`,
-    `warm-${warmB}-7164`,
-    'normal-6600',
-  ]);
-  assert.ok(warmBuilds.some(([address, bid]) => address === warmA && bid === 7_164));
+
+// Regression fixtures model chain changes by time, not by an assumed RPC count.
+function closingFixture(overrides: Partial<import('../src/lcfs.js').LcfsDependencies> = {}, warmUpAddresses: string[] = []) {
+  let clock = 60_000;
+  let defender = 'initial';
+  let bid = 100;
+  const sent: Array<{ wire: string; at: number }> = [];
+  const events: any[] = [];
+  const live = () => ({ ...snapshot, activeRentalEndsAtMs: 100_000, activeRentalIdentity: 'rental-1',
+    reservationDefender: defender, reservationBidAtlas: bid, minimumTakeoverBidAtlas: bid * 1.1, projectedExpiryTakeoverBidAtlas: bid * 1.1 });
+  const deps: import('../src/lcfs.js').LcfsDependencies = {
+    now: () => clock, waitUntil: async target => { clock = target; },
+    resolveOwnedWallets: async () => ['ours'], loadBalance: async () => 100_000, recordPendingFunding: () => {},
+    fetchBundle: async () => ({ raw: {} as never, mapped: live() }),
+    build: async ({ plan }) => [plan.kind === 'ready' ? plan.bidAtlas : -1] as never,
+    prepareTransaction: async instructions => `bid-${String(instructions[0])}`,
+    prepareWarmTransaction: async input => `warm-${input.warmUpAddress}-${input.bidAtlas}`,
+    submitPrepared: async wire => { sent.push({ wire, at: clock }); defender = 'ours'; return `signature-${sent.length}`; },
+    monitorAfterPrimary: true, monitorIntervalMs: 250,
+    onSubmission: event => { events.push(event); },
+    ...overrides,
+  };
+  return { sent, events, live, deps, time: () => clock, setTime: (time: number) => { clock = time; },
+    setDefender: (value: string, amount = 120) => { defender = value; bid = amount; },
+    run: () => executeLcfsAttempt({ ...entry, maximumReservationBidAtlas: 500 },
+      { ...DEFAULT_SETTINGS, walletAddress: 'ours', playerProfile: entry.contractAddress, useHeliusSender: true, warmUpAddresses },
+      'test-only-secret', undefined, deps, 100_000) };
+}
+
+test('warm lane submits only for the observed opponent, never blindly for other configured wallets', async () => {
+  const f = closingFixture({}, ['opponent-A', 'opponent-B']);
+  f.deps.fetchBundle = async () => {
+    if (f.time() >= 96_000 && f.sent.length === 1) f.setDefender('opponent-A');
+    return { raw: {} as never, mapped: f.live() };
+  };
+  await f.run();
+  assert.deepEqual(f.sent.map(x => x.wire), ['bid-110', 'warm-opponent-A-149']);
+  assert.equal(f.sent[1].at, 98_000);
+});
+
+test('a rival changing during preparation invalidates the old candidate and gets a fresh counter', async () => {
+  const f = closingFixture();
+  const build = f.deps.build!;
+  f.deps.build = async input => {
+    const result = await build(input);
+    if (f.time() < 80_000) f.setDefender('new-opponent', 130);
+    return result;
+  };
+  await f.run();
+  assert.deepEqual(f.sent.map(x => x.wire), ['bid-143']);
+});
+
+test('defender changing during final funding check prevents stale submission and rebuilds', async () => {
+  const f = closingFixture(); let checks = 0;
+  f.deps.loadBalance = async () => { if (++checks === 1) f.setDefender('new-opponent', 130); return 100_000; };
+  await f.run();
+  assert.deepEqual(f.sent.map(x => x.wire), ['bid-143']);
+  assert.ok(f.events.some(e => e.status === 'skipped' && /Defender changed/.test(e.detail)));
+});
+
+test('slow warm preparation cannot submit after the rental deadline', async () => {
+  const f = closingFixture({}, ['opponent']);
+  f.deps.fetchBundle = async () => { if (f.sent.length === 1) f.setDefender('opponent'); return { raw: {} as never, mapped: f.live() }; };
+  f.deps.prepareWarmTransaction = async () => { f.setTime(100_010); return 'late-warm'; };
+  await f.run();
+  assert.equal(f.sent.length, 1);
+  assert.ok(f.events.some(e => e.status === 'skipped' && /deadline/.test(e.detail)));
+});
+
+test('slow reactive preparation and slow intent persistence both stop at the deadline', async () => {
+  for (const phase of ['reactive', 'intent']) {
+    const f = closingFixture();
+    if (phase === 'reactive') {
+      f.deps.fetchBundle = async () => { if (f.sent.length === 1) f.setDefender('opponent'); return { raw: {} as never, mapped: f.live() }; };
+      const build = f.deps.build!;
+      f.deps.build = async input => { if (f.sent.length) f.setTime(100_100); return build(input); };
+    } else f.deps.recordIntent = async () => { f.setTime(100_100); };
+    await f.run();
+    assert.equal(f.sent.length, phase === 'reactive' ? 1 : 0);
+  }
+});
+
+test('changed active-rental identity stops the closing monitor even if its end timestamp matches', async () => {
+  const f = closingFixture();
+  f.deps.fetchBundle = async () => ({ raw: {} as never, mapped: { ...f.live(), activeRentalIdentity: f.sent.length ? 'rental-2' : 'rental-1' } });
+  await f.run();
+  assert.equal(f.sent.length, 1);
+});
+
+test('insufficient or unknown funding prevents submission; full rental escrow is included', async () => {
+  for (const balance of [null, 110, 209.99999999]) {
+    const f = closingFixture({ loadBalance: async () => balance });
+    await f.run();
+    assert.equal(f.sent.length, 0);
+    assert.ok(f.events.some(e => /Funding unknown|Insufficient ATLAS/.test(e.detail)));
+  }
+});
+
+test('a slow final balance request cannot cross the deadline and submit', async () => {
+  const f = closingFixture();
+  f.deps.loadBalance = async () => { f.setTime(100_001); return 100_000; };
+  await f.run();
+  assert.equal(f.sent.length, 0);
+});
+
+test('closing bid uses the expiry floor and preserves the configured maximum', () => {
+  const future = { ...snapshot, minimumTakeoverBidAtlas: 10, projectedExpiryTakeoverBidAtlas: 25 };
+  assert.equal(planLcfsReservation(entry, future, position, 1_000).kind, 'blocked');
+  const plan = planLcfsReservation({ ...entry, maximumReservationBidAtlas: 25 }, future, position, 1_000);
+  assert.equal(plan.kind === 'ready' && plan.bidAtlas, 25);
+});
+
+test('a transient counter-build failure preserves the primary result and retries fresh state', async () => {
+  const f = closingFixture(); let failed = false;
+  f.deps.fetchBundle = async () => { if (f.sent.length === 1) f.setDefender('opponent'); return { raw: {} as never, mapped: f.live() }; };
+  const build = f.deps.build!;
+  f.deps.build = async input => { if (f.sent.length && !failed) { failed = true; throw new Error('temporary read failure'); } return build(input); };
+  assert.equal((await f.run()).kind, 'submitted');
+  assert.equal(f.sent.length, 2);
+  assert.ok(f.events.some(e => e.status === 'failed' && /Counter preparation/.test(e.detail)));
 });

@@ -145,3 +145,14 @@ test('zero-bid reservations still lock rent and missing cached escrow stays unkn
   assert.equal(deriveWalletPosition(mapped, 'wallet-1').atlasLocked, null);
   assert.equal(deriveWalletPosition(mapped, 'someone-else').atlasLocked, 0);
 });
+
+test('closing contracts reject reservations and rental identity changes even with the same end time', () => {
+  const raw = fixture();
+  raw.contract.data.toClose = true;
+  const before = mapContractSnapshot(raw);
+  assert.equal(before.reservationsAllowed, false);
+  raw.activeRental!.data.startTime += 1n;
+  const after = mapContractSnapshot(raw);
+  assert.notEqual(before.activeRentalIdentity, after.activeRentalIdentity);
+  assert.equal(before.activeRentalEndsAtMs, after.activeRentalEndsAtMs);
+});

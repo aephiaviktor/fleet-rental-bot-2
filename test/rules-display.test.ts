@@ -87,3 +87,12 @@ test('LCFS report uses latest outcome for an ended reservation and accurate send
   'Sunpaa: LCFS bid sent — transaction 123456789A…',
  );
 });
+
+test('funding distinguishes limit blockers from genuine balance shortfalls', () => {
+  const format = context.RulesDisplay.fundingLabel;
+  assert.equal(format({ status: 'bid-limit', shortfallAtlas: 1517339.557 }), 'Bid limit');
+  assert.equal(format({ status: 'rate-limit', shortfallAtlas: 50039.557 }), 'Rate limit');
+  assert.equal(format({ status: 'short', shortfallAtlas: 0.001 }), 'Short 0.01 ATLAS');
+  assert.equal(format({ status: 'ready' }), 'Ready');
+  assert.equal(format(null), 'Unknown');
+});

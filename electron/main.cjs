@@ -687,7 +687,8 @@ ipcMain.handle('funding:refresh', async () => {
     const row = cached.get(entry.id);
     if (!row || row.entry.contractAddress !== entry.contractAddress) return [];
     return [{ id: entry.id, contractAddress: entry.contractAddress, requestedDurationSeconds: entry.requestedDurationSeconds,
-      lcfs: entry.lcfs, funding: estimateFunding(entry, row.snapshot, available) }];
+      lcfs: entry.lcfs, maximumReservationBidAtlas: entry.maximumReservationBidAtlas,
+      maximumRentalRateAtlasPerDay: entry.maximumRentalRateAtlasPerDay, funding: estimateFunding(entry, row.snapshot, available) }];
   });
 });
 

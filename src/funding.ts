@@ -26,7 +26,8 @@ export function recordPendingFunding(wallet: string, wire: string, amount: numbe
 }
 
 export interface FundingEstimate {
-  status: 'ready' | 'short' | 'unknown';
+  status: 'ready' | 'short' | 'unknown' | 'bid-limit' | 'rate-limit';
+  limitDetail: string | null;
   availableAtlas: number | null;
   requiredAtlas: number | null;
   bidAtlas: number | null;
@@ -58,7 +59,14 @@ export function estimateFunding(entry: FleetWatchEntry, snapshot: FleetContractS
   } catch { /* Do not display Ready when a required input is unavailable. */ }
   const available = availableAtlas != null && Number.isFinite(availableAtlas) && availableAtlas >= 0 ? availableAtlas : null;
   const shortfall = required == null || available == null ? null : Math.max(0, Math.round((required - available) * FACTOR) / FACTOR);
-  return { status: shortfall == null ? 'unknown' : shortfall > 0 ? 'short' : 'ready', availableAtlas: available, requiredAtlas: required, bidAtlas: bid, escrowAtlas: escrow, shortfallAtlas: shortfall, checkedAtMs: nowMs };
+  // A top-up cannot make a bid within the user's limits. Show that blocker
+  // before funding status, without capping the actual on-chain requirement.
+  const rateLimited = Number.isFinite(snapshot.rentalRateAtlasPerDay) && snapshot.rentalRateAtlasPerDay > entry.maximumRentalRateAtlasPerDay;
+  const bidLimited = bid != null && Number.isFinite(bid) && bid > entry.maximumReservationBidAtlas;
+  const limitDetail = rateLimited
+    ? `Rental rate ${snapshot.rentalRateAtlasPerDay} ATLAS/day exceeds your maximum ${entry.maximumRentalRateAtlasPerDay}.`
+    : bidLimited ? `Required bid ${bid} ATLAS exceeds your maximum ${entry.maximumReservationBidAtlas}.` : null;
+  return { status: rateLimited ? 'rate-limit' : bidLimited ? 'bid-limit' : shortfall == null ? 'unknown' : shortfall > 0 ? 'short' : 'ready', limitDetail, availableAtlas: available, requiredAtlas: required, bidAtlas: bid, escrowAtlas: escrow, shortfallAtlas: shortfall, checkedAtMs: nowMs };
 }
 
 /** Read the exact ATA used by reserveRental, not other profile wallets or locked escrow. */

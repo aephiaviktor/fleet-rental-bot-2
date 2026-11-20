@@ -6,4 +6,4 @@
 #history-body .history-completed .history-status-cell { color: #9dd4ff; }
 .lcfs-outcome-note{margin:0;padding:.85rem 1rem;border-top:1px solid var(--border);color:var(--muted);white-space:pre-line}
 
-.funding-ready{color:#24c9a1;font-weight:600}.funding-short{color:#ff7373;font-weight:700}.funding-unknown{color:#e5b95c}
+.funding-ready{color:#24c9a1;font-weight:600}.funding-short{color:#ff7373;font-weight:700}.funding-unknown,.funding-bid-limit,.funding-rate-limit{color:#e5b95c}

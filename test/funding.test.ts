@@ -93,3 +93,32 @@ test('durable LCFS diagnostics append events and redact provider URLs', async ()
   assert.equal(text.trim().split('\n').length,2); assert.doesNotMatch(text,/private-token/);
   assert.match(text,/public-signature/);text.trim().split('\n').forEach(line=>JSON.parse(line));
 });
+
+test('Large screenshot regression: a takeover above Max bid is a bid-limit blocker, not a top-up warning', () => {
+  const rule = { ...entry, lcfs: false, requestedDurationSeconds: 24 * 86400, maximumReservationBidAtlas: 8000, maximumRentalRateAtlasPerDay: 2900 };
+  const large = { ...snapshot, rentalRateAtlasPerDay: 2900, minimumTakeoverBidAtlas: 1649700 };
+  const result = estimateFunding(rule, large, 201960.44283635);
+  assert.equal(result.status, 'bid-limit');
+  assert.equal(result.escrowAtlas, 69600);
+  assert.equal(result.requiredAtlas, 1719300); // Never pretend a capped bid satisfies the live minimum.
+  assert.equal(result.shortfallAtlas, 1517339.55716365);
+  assert.match(result.limitDetail!, /8000/);
+  assert.equal(estimateFunding(rule, { ...large, minimumTakeoverBidAtlas: 8000 }, 201960.44283635).status, 'ready');
+  assert.equal(estimateFunding(rule, { ...large, minimumTakeoverBidAtlas: 8000 }, 77000).status, 'short');
+});
+
+test('rate-limit blockers precede shortfalls and disappear when the rule permits the live rate', () => {
+  const rule = { ...entry, lcfs: false, requestedDurationSeconds: 24 * 86400, maximumRentalRateAtlasPerDay: 10000, maximumReservationBidAtlas: 33000 };
+  const mining = { ...snapshot, rentalRateAtlasPerDay: 10500, minimumTakeoverBidAtlas: 0 };
+  const blocked = estimateFunding(rule, mining, 201960.44283635);
+  assert.equal(blocked.status, 'rate-limit'); assert.equal(blocked.requiredAtlas, 252000);
+  assert.match(blocked.limitDetail!, /10500.*10000/);
+  assert.equal(estimateFunding({ ...rule, maximumRentalRateAtlasPerDay: 10500 }, mining, 201960.44283635).status, 'short');
+  assert.equal(estimateFunding(rule, mining, null).status, 'rate-limit');
+});
+
+test('LCFS projected bid above Max bid is shown as a limit even with enough ATLAS', () => {
+  const rule = { ...entry, maximumReservationBidAtlas: 1100, maximumRentalRateAtlasPerDay: 1000 };
+  assert.equal(estimateFunding(rule, { ...snapshot, projectedExpiryTakeoverBidAtlas: 1101 }, 1e6).status, 'bid-limit');
+  assert.equal(estimateFunding(rule, snapshot, 41100).status, 'ready');
+});

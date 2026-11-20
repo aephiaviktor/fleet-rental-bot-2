@@ -1,5 +1,15 @@
 /* Shared pure display helpers, also exercised by the Node regression tests. */
 globalThis.RulesDisplay = {
+  fundingLabel(estimate) {
+    if (estimate?.status === 'bid-limit') return 'Bid limit';
+    if (estimate?.status === 'rate-limit') return 'Rate limit';
+    if (estimate?.status === 'ready') return 'Ready';
+    if (estimate?.status === 'short' && Number.isFinite(estimate.shortfallAtlas)) {
+      const amount = Math.ceil(estimate.shortfallAtlas * 100) / 100;
+      return `Short ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ATLAS`;
+    }
+    return 'Unknown';
+  },
   allowedDays(snapshot) {
     const min = snapshot?.minimumDurationSeconds, max = snapshot?.maximumDurationSeconds;
     if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 0 || max < min) return '—';

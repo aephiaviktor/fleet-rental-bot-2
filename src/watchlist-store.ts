@@ -6,6 +6,7 @@ import { requireSolanaAddress } from './solana-address.js';
 
 export interface WatchlistDocument {
   version: 4;
+  contractTermsColumnsAdded?: true;
   entries: FleetWatchEntry[];
   visibleColumns: ColumnId[];
 }
@@ -39,7 +40,7 @@ export function validateWatchEntry(value: unknown): FleetWatchEntry {
 }
 
 export function parseWatchlist(text: string): WatchlistDocument {
-  const parsed = JSON.parse(text) as { version?: number; entries?: unknown[]; visibleColumns?: unknown };
+  const parsed = JSON.parse(text) as { version?: number; entries?: unknown[]; visibleColumns?: unknown; contractTermsColumnsAdded?: unknown };
   if (![1, 2, 3, 4].includes(parsed.version ?? 0)) throw new Error(`Unsupported watchlist version: ${String(parsed.version)}`);
   if (!Array.isArray(parsed.entries)) throw new Error('Watchlist entries must be an array');
   const entries = parsed.entries.map(validateWatchEntry);
@@ -53,7 +54,12 @@ export function parseWatchlist(text: string): WatchlistDocument {
     }
   }
   if ((parsed.version ?? 0) <= 3 && !visibleColumns.includes('reservationCurrency')) visibleColumns.push('reservationCurrency');
-  return { version: 4, entries, visibleColumns };
+  if (parsed.contractTermsColumnsAdded !== true) {
+    for (const column of ['allowedDays', 'cancelDelay'] as const) {
+      if (!visibleColumns.includes(column)) visibleColumns.push(column);
+    }
+  }
+  return { version: 4, contractTermsColumnsAdded: true, entries, visibleColumns };
 }
 
 export async function loadWatchlist(filePath: string): Promise<WatchlistDocument> {
@@ -61,7 +67,7 @@ export async function loadWatchlist(filePath: string): Promise<WatchlistDocument
     return parseWatchlist(await readFile(filePath, 'utf8'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { version: 4, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
+      return { version: 4, contractTermsColumnsAdded: true, entries: [], visibleColumns: normalizeVisibleColumns(undefined) };
     }
     throw error;
   }

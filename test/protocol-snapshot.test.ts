@@ -16,7 +16,7 @@ function fixture(): ContractSnapshot {
     } as never },
     contract: { address: 'contract' as never, data: {
       weight: 3, reservationsDisabled: false, rate: 2_500_000_000n,
-      durationMinSeconds: 3_600n, durationMaxSeconds: 8_035_200n,
+      durationMinSeconds: 3_600n, durationMaxSeconds: 8_035_200n, cancelDelayMin: 43_200n,
     } as never },
     activeRental: { address: 'active' as never, data: { startTime: 1_000n, endTime: 2_000n } as never },
     queuedRental: { address: 'queued' as never, data: {
@@ -39,6 +39,7 @@ test('maps official SRSLY snapshot units without losing reservation currency', (
   assert.equal(mapped.reservationsAllowed, true);
   assert.equal(mapped.minimumDurationSeconds, 3_600);
   assert.equal(mapped.maximumDurationSeconds, 8_035_200);
+  assert.equal(mapped.cancelDelaySeconds, 43_200);
   assert.equal(mapped.reservationCurrency, 'ATLAS');
   assert.equal(mapped.reservationBidAtlas, 25);
   assert.equal(mapped.minimumTakeoverBidAtlas, 26.25);

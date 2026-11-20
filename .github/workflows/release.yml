@@ -1,0 +1,96 @@
+name: Windows portable release
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Check release version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          $existing = gh release view "v$version" --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isDraft) {
+              "published=true" >> $env:GITHUB_OUTPUT
+            }
+          }
+          exit 0
+      - name: Install locked dependencies
+        if: steps.version.outputs.published != 'true'
+        run: npm ci
+      - name: Tests and typecheck
+        if: steps.version.outputs.published != 'true'
+        shell: pwsh
+        run: |
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check ui/app.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check ui/rules-display.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows portable executable
+        if: steps.version.outputs.published != 'true'
+        run: npm run package:windows -- --publish never
+      - name: Verify packaged source
+        if: steps.version.outputs.published != 'true'
+        run: node scripts/verify-release.cjs release/win-unpacked/resources/app.asar
+      - name: Publish verified app release
+        if: steps.version.outputs.published != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $tag = "v$version"
+          $name = "Fleet-Rental-Bot-2-$version-portable.exe"
+          $asset = "release/$name"
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content release/SHA256SUMS -Encoding utf8
+          $notes = "docs/releases/$version.md"
+          if (-not (Test-Path $notes)) { throw "Missing release notes: $notes" }
+          $body = (Get-Content $notes -Raw) + "`nValidation: tests, typecheck, and packaged source verification passed on Windows.`n`nSHA-256: $hash`n"
+          $body | Set-Content release/notes.md -Encoding utf8
+          gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target $env:GITHUB_SHA --title "Fleet Rental Bot 2 v$version" --notes-file release/notes.md --draft
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release upload $tag $asset release/SHA256SUMS --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $uploaded = ($releaseJson | ConvertFrom-Json).assets | Where-Object { $_.name -eq $name }
+          if ($uploaded.digest -ne "sha256:$hash") { throw 'Uploaded asset SHA-256 mismatch' }
+          gh release edit $tag --draft=false --latest --notes-file release/notes.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

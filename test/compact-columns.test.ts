@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const expectedShortLabels: Record<string, string> = {
+  allowedDays: 'Allowed Days',
+  cancelDelay: 'Cancel Delay',
   rentalRate: 'Rate/d',
   rentalCost: 'Rent total',
   reservationBid: 'Bid',
@@ -19,6 +21,13 @@ const expectedShortLabels: Record<string, string> = {
   estimatedPoints: 'Pts total',
   positionStatus: 'Our bid',
 };
+
+test('live contract terms follow Ending In in both the table and sidebar', async () => {
+  const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');
+  assert.match(renderer, /'endingIn','allowedDays','cancelDelay','lcfs'/);
+  assert.match(renderer, /allowedDays:RulesDisplay.allowedDays\(s\)/);
+  assert.match(renderer, /cancelDelay:RulesDisplay.cancelDelay\(s\?\.cancelDelaySeconds\)/);
+});
 
 test('table uses compact labels for every live column', async () => {
   const renderer = await readFile(new URL('../../ui/app.js', import.meta.url), 'utf8');

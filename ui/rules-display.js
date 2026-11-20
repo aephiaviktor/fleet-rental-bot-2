@@ -1,5 +1,23 @@
 /* Shared pure display helpers, also exercised by the Node regression tests. */
 globalThis.RulesDisplay = {
+  allowedDays(snapshot) {
+    const min = snapshot?.minimumDurationSeconds, max = snapshot?.maximumDurationSeconds;
+    if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 0 || max < min) return '—';
+    const days = seconds => (seconds / 86400).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    return `${days(min)}–${days(max)}`;
+  },
+  cancelDelay(seconds) {
+    if (!Number.isSafeInteger(seconds) || seconds < 0) return '—';
+    if (seconds === 0) return 'Instant';
+    const units = [[86400, 'd'], [3600, 'h'], [60, 'm'], [1, 's']];
+    const parts = [];
+    for (const [size, suffix] of units) {
+      const amount = Math.floor(seconds / size);
+      if (amount) parts.push(`${amount}${suffix}`);
+      seconds %= size;
+    }
+    return parts.join(' ');
+  },
   historyCurrency(row) {
     return row.bidSource === 'reservation' && row.bid === 0 && row.currency === 'Unknown'
       ? 'Points*' : row.currency || '—';

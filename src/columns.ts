@@ -32,6 +32,8 @@ export type ColumnId =
   | 'canSafelyOperate'
   | 'comment'
   | 'endingIn'
+  | 'allowedDays'
+  | 'cancelDelay'
   | 'lcfs';
 
 export interface ColumnDefinition {
@@ -52,6 +54,8 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'canSafelyOperate', label: 'Safe to operate', group: 'decision', defaultVisible: true },
   { id: 'comment', label: 'Note', group: 'decision', defaultVisible: true },
   { id: 'endingIn', label: 'Ending In', group: 'reservation', defaultVisible: true },
+  { id: 'allowedDays', label: 'Allowed rental duration (days)', group: 'reservation', defaultVisible: true },
+  { id: 'cancelDelay', label: 'Minimum cancellation notice for a new rental', group: 'reservation', defaultVisible: true },
   { id: 'lcfs', label: 'Last-come-first-serve', group: 'reservation', defaultVisible: true },
   { id: 'rentalRate', label: 'Rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'rentalCost', label: 'Estimated rental cost / day (ATLAS)', group: 'economics', defaultVisible: true },

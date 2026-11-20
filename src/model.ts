@@ -28,6 +28,8 @@ export interface FleetContractSnapshot {
   reservationsAllowed: boolean;
   minimumDurationSeconds: number;
   maximumDurationSeconds: number;
+  /** Contract notice period for a new rental; absent in older cached snapshots. */
+  cancelDelaySeconds?: number | null;
   rentalRateAtlasPerDay: number;
   activeRentalEndsAtMs: number | null;
   reservationCurrency: ReservationCurrency | null;

@@ -4,6 +4,22 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 const context: any = {};
 runInNewContext(readFileSync('ui/rules-display.js', 'utf8'), context);
+test('allowed days preserves whole-day and fractional-day contract limits', () => {
+  const range = (min: number, max: number) => context.RulesDisplay.allowedDays({minimumDurationSeconds:min,maximumDurationSeconds:max});
+  assert.equal(range(5*86400,40*86400), '5–40');
+  assert.equal(range(12*3600,40*86400), '0.5–40');
+  assert.equal(range(5*86400,5*86400), '5–5');
+  assert.equal(range(40*86400,5*86400), '—');
+  assert.equal(context.RulesDisplay.allowedDays({}), '—');
+  assert.equal(context.RulesDisplay.allowedDays(null), '—');
+});
+test('cancel delay preserves sub-day precision and distinguishes zero from unavailable', () => {
+  const format = context.RulesDisplay.cancelDelay;
+  for (const [seconds, expected] of [[0,'Instant'],[5*86400,'5d'],[12*3600,'12h'],[2*86400+12*3600,'2d 12h'],[3661,'1h 1m 1s'],[30,'30s']]) {
+    assert.equal(format(seconds), expected);
+  }
+  for (const missing of [undefined,null,NaN,Infinity,-1,'0',0.5]) assert.equal(format(missing), '—');
+});
 test('sorts all rules by numeric end time, stable unknowns last without mutation', () => {
   const entries = [{id:'unknown'}, {id:'late'}, {id:'early',enabled:false}, {id:'missing'}];
   const live = new Map([['late',{ok:true,row:{snapshot:{activeRentalEndsAtMs:200}}}],['early',{ok:true,row:{snapshot:{activeRentalEndsAtMs:100}}}]]);

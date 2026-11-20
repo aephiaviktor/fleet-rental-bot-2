@@ -56,7 +56,7 @@ test('all current table columns are selectable and visible by default', () => {
 test('adds the bid currency column when migrating existing v3 watchlists', () => {
   const document = parseWatchlist(JSON.stringify({ version: 3, entries: [entry], visibleColumns: ['reservationBid'] }));
   assert.equal(document.version, 4);
-  assert.deepEqual(document.visibleColumns, ['reservationBid', 'reservationCurrency']);
+  assert.deepEqual(document.visibleColumns, ['reservationBid', 'reservationCurrency', 'allowedDays', 'cancelDelay']);
 });
 
 test('normalizes selectable columns and ignores unknown values', () => {
@@ -67,10 +67,19 @@ test('normalizes selectable columns and ignores unknown values', () => {
   assert.equal(document.visibleColumns.includes('endingIn'), true);
 });
 
+test('adds contract terms once without changing rules or existing visibility choices', () => {
+  const migrated = parseWatchlist(JSON.stringify({ version: 4, entries: [entry], visibleColumns: ['comment','endingIn'] }));
+  assert.deepEqual(migrated.entries, [entry]);
+  assert.deepEqual(migrated.visibleColumns, ['comment','endingIn','allowedDays','cancelDelay']);
+  assert.equal(migrated.contractTermsColumnsAdded, true);
+  migrated.visibleColumns = ['comment'];
+  assert.deepEqual(parseWatchlist(JSON.stringify(migrated)).visibleColumns, ['comment']);
+});
+
 test('saves atomically and round-trips a validated document', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fleet-rental-bot-2-'));
   const filePath = path.join(directory, 'watchlist.json');
-  const document: WatchlistDocument = { version: 4, entries: [entry], visibleColumns: ['label', 'comment'] };
+  const document: WatchlistDocument = { version: 4, contractTermsColumnsAdded: true, entries: [entry], visibleColumns: ['label', 'comment'] };
   await saveWatchlist(filePath, document);
   assert.deepEqual(await loadWatchlist(filePath), document);
   assert.match(await readFile(filePath, 'utf8'), /Fleet One/);

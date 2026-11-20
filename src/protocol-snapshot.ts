@@ -47,6 +47,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
     reservationsAllowed: config.reservationsEnabled && !contract.reservationsDisabled,
     minimumDurationSeconds: Number(contract.durationMinSeconds),
     maximumDurationSeconds: Number(contract.durationMaxSeconds),
+    cancelDelaySeconds: contract.cancelDelayMin == null ? null : Number(contract.cancelDelayMin),
     rentalRateAtlasPerDay: decimalAmount(BigInt(snapshot.effectiveRate), atlasFactor),
     activeRentalEndsAtMs: active ? unixSecondsToMs(BigInt(active.endTime)) : null,
     reservationCurrency,

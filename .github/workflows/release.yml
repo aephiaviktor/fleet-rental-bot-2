@@ -88,9 +88,12 @@ jobs:
           }
           gh release upload $tag $asset release/SHA256SUMS --clobber
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          # Draft releases do not yet have a resolvable Git tag. Resolve their ID first.
+          $releaseId = gh release view $tag --json databaseId --jq .databaseId
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $uploaded = ($releaseJson | ConvertFrom-Json).assets | Where-Object { $_.name -eq $name }
           if ($uploaded.digest -ne "sha256:$hash") { throw 'Uploaded asset SHA-256 mismatch' }
-          gh release edit $tag --draft=false --latest --notes-file release/notes.md
+          gh release edit $tag --target $env:GITHUB_SHA --draft=false --latest --notes-file release/notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

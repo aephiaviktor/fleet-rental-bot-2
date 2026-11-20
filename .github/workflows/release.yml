@@ -3,7 +3,7 @@ name: Windows portable release
 on:
   push:
     branches: [main]
-    paths: [package.json]
+    paths: [package.json, .github/workflows/release.yml, scripts/verify-release.cjs]
   workflow_dispatch:
 
 permissions:

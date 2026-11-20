@@ -13,6 +13,8 @@ for (const root of ['electron', 'ui', 'dist/src']) {
   for (const relative of fs.readdirSync(root, { recursive: true })) {
     const file = path.join(root, relative);
     if (!fs.statSync(file).isFile()) continue;
+    // electron-builder excludes development-only declarations from app archives.
+    if (file.endsWith('.d.ts')) continue;
     assert.ok(asar.extractFile(archive, file.replaceAll('\\', '/')).equals(fs.readFileSync(file)), `Packaged file differs: ${file}`);
   }
 }

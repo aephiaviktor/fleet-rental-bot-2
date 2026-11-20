@@ -15,7 +15,8 @@ for (const root of ['electron', 'ui', 'dist/src']) {
     if (!fs.statSync(file).isFile()) continue;
     // electron-builder excludes development-only declarations from app archives.
     if (file.endsWith('.d.ts')) continue;
-    assert.ok(asar.extractFile(archive, file.replaceAll('\\', '/')).equals(fs.readFileSync(file)), `Packaged file differs: ${file}`);
+    // ASAR's directory lookup splits on the host path separator, including on Windows.
+    assert.ok(asar.extractFile(archive, file).equals(fs.readFileSync(file)), `Packaged file differs: ${file}`);
   }
 }
 console.log(`Verified packaged version ${manifest.version} and all Electron, UI, and domain files.`);

@@ -94,17 +94,32 @@ test('durable LCFS diagnostics append events and redact provider URLs', async ()
   assert.match(text,/public-signature/);text.trim().split('\n').forEach(line=>JSON.parse(line));
 });
 
-test('Large screenshot regression: a takeover above Max bid is a bid-limit blocker, not a top-up warning', () => {
+test('Large screenshot: LCFS off funds rent only, while enabling LCFS restores bid-limit checks', () => {
   const rule = { ...entry, lcfs: false, requestedDurationSeconds: 24 * 86400, maximumReservationBidAtlas: 8000, maximumRentalRateAtlasPerDay: 2900 };
-  const large = { ...snapshot, rentalRateAtlasPerDay: 2900, minimumTakeoverBidAtlas: 1649700 };
-  const result = estimateFunding(rule, large, 201960.44283635);
-  assert.equal(result.status, 'bid-limit');
-  assert.equal(result.escrowAtlas, 69600);
-  assert.equal(result.requiredAtlas, 1719300); // Never pretend a capped bid satisfies the live minimum.
-  assert.equal(result.shortfallAtlas, 1517339.55716365);
-  assert.match(result.limitDetail!, /8000/);
-  assert.equal(estimateFunding(rule, { ...large, minimumTakeoverBidAtlas: 8000 }, 201960.44283635).status, 'ready');
-  assert.equal(estimateFunding(rule, { ...large, minimumTakeoverBidAtlas: 8000 }, 77000).status, 'short');
+  const large = { ...snapshot, rentalRateAtlasPerDay: 2900, minimumTakeoverBidAtlas: 1649700,
+    projectedExpiryTakeoverBidAtlas: 1650000, reservationBidAtlas: 0 };
+  const off = estimateFunding(rule, large, 201960.44283635);
+  assert.equal(off.status, 'ready'); assert.equal(off.bidAtlas, 0);
+  assert.equal(off.escrowAtlas, 69600); assert.equal(off.requiredAtlas, 69600);
+  assert.equal(off.shortfallAtlas, 0); assert.equal(off.limitDetail, null);
+  const on = estimateFunding({ ...rule, lcfs: true }, large, 201960.44283635);
+  assert.equal(on.status, 'bid-limit'); assert.equal(on.bidAtlas, 1650000);
+  assert.equal(on.requiredAtlas, 1719600); // Live requirements are never capped to Max bid.
+  assert.match(on.limitDetail!, /8000/);
+  assert.equal(estimateFunding(rule, large, 69600).status, 'ready');
+  const short = estimateFunding(rule, large, 69000);
+  assert.equal(short.status, 'short'); assert.equal(short.shortfallAtlas, 600);
+});
+
+test('LCFS off ignores unavailable takeover data but still needs valid rent and a known balance', () => {
+  const rule = { ...entry, lcfs: false, maximumReservationBidAtlas: 0, maximumRentalRateAtlasPerDay: 1000 };
+  for (const minimum of [null, NaN, Infinity, -1]) {
+    const unknownBid = { ...snapshot, minimumTakeoverBidAtlas: minimum, projectedExpiryTakeoverBidAtlas: NaN };
+    assert.equal(estimateFunding(rule, unknownBid, 40000).status, 'ready');
+    assert.equal(estimateFunding({ ...rule, lcfs: true }, unknownBid, 40000).status, 'unknown');
+  }
+  assert.equal(estimateFunding(rule, snapshot, null).status, 'unknown');
+  assert.equal(estimateFunding(rule, { ...snapshot, rentalRateAtlasPerDay: NaN }, 40000).status, 'unknown');
 });
 
 test('rate-limit blockers precede shortfalls and disappear when the rule permits the live rate', () => {

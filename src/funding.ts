@@ -51,9 +51,14 @@ export function requiredAtlasFunding(ratePerDay: number, durationSeconds: number
 export function estimateFunding(entry: FleetWatchEntry, snapshot: FleetContractSnapshot, availableAtlas: number | null, nowMs = Date.now()): FundingEstimate {
   let bid: number | null = null, required: number | null = null, escrow: number | null = null;
   try {
-    const minimum = snapshot.minimumTakeoverBidAtlas;
-    if (minimum == null || !Number.isFinite(minimum) || minimum < 0) throw new Error('Unknown bid');
-    bid = entry.lcfs ? Math.ceil(Number(Math.max(minimum, snapshot.projectedExpiryTakeoverBidAtlas ?? 0, (snapshot.reservationBidAtlas ?? 0) * 1.1).toFixed(8))) : minimum;
+    // Monitoring without LCFS estimates rent only. A missing or expensive
+    // takeover bid must not affect that estimate.
+    bid = 0;
+    if (entry.lcfs) {
+      const minimum = snapshot.minimumTakeoverBidAtlas;
+      if (minimum == null || !Number.isFinite(minimum) || minimum < 0) throw new Error('Unknown bid');
+      bid = Math.ceil(Number(Math.max(minimum, snapshot.projectedExpiryTakeoverBidAtlas ?? 0, (snapshot.reservationBidAtlas ?? 0) * 1.1).toFixed(8)));
+    }
     required = requiredAtlasFunding(snapshot.rentalRateAtlasPerDay, entry.requestedDurationSeconds, bid);
     escrow = requiredAtlasFunding(snapshot.rentalRateAtlasPerDay, entry.requestedDurationSeconds, 0);
   } catch { /* Do not display Ready when a required input is unavailable. */ }
@@ -62,7 +67,7 @@ export function estimateFunding(entry: FleetWatchEntry, snapshot: FleetContractS
   // A top-up cannot make a bid within the user's limits. Show that blocker
   // before funding status, without capping the actual on-chain requirement.
   const rateLimited = Number.isFinite(snapshot.rentalRateAtlasPerDay) && snapshot.rentalRateAtlasPerDay > entry.maximumRentalRateAtlasPerDay;
-  const bidLimited = bid != null && Number.isFinite(bid) && bid > entry.maximumReservationBidAtlas;
+  const bidLimited = entry.lcfs && bid != null && Number.isFinite(bid) && bid > entry.maximumReservationBidAtlas;
   const limitDetail = rateLimited
     ? `Rental rate ${snapshot.rentalRateAtlasPerDay} ATLAS/day exceeds your maximum ${entry.maximumRentalRateAtlasPerDay}.`
     : bidLimited ? `Required bid ${bid} ATLAS exceeds your maximum ${entry.maximumReservationBidAtlas}.` : null;

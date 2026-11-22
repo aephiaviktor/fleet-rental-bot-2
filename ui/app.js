@@ -147,7 +147,8 @@ function heldTime(ms) {
 
 function renderAtlasEarnings(report) {
   const percent = value => value == null ? '—' : `${n(value)}%`;
-  $('earnings-total').textContent = report.totalBonusAtlas == null ? '—' : `${n(report.totalBonusAtlas, 8)} ATLAS`;
+  const bid = value => value?.currency ? `${n(value.amount)} ${value.currency}` : n(value?.amount);
+  $('earnings-total').textContent = report.totalBonusAtlas == null ? '—' : `${n(report.totalBonusAtlas)} ATLAS`;
   $('earnings-apr').textContent = percent(report.aprPct);
   const body = $('earnings-body');
   body.replaceChildren();
@@ -167,14 +168,16 @@ function renderAtlasEarnings(report) {
     const outbid = el('td', RulesDisplay.utc(row.outbidAtMs).replace(/ UTC$/, ''));
     const held = el('td', heldTime(row.heldMs));
     if (row.heldMs == null) held.title = 'The original reservation time could not be matched.';
-    const locked = el('td', n(row.atlasLocked, 8));
+    const locked = el('td', n(row.atlasLocked));
     locked.title = 'Rent escrow plus ATLAS bid principal. Any Points bid is kept separate.';
-    const bonus = el('td', n(row.bonusAtlas, 8));
+    const myBid = el('td', bid(row.myBid));
+    const challengerBid = el('td', bid(row.challengerBid));
+    const bonus = el('td', n(row.bonusAtlas));
     bonus.title = row.bonusAtlas == null ? 'An ATLAS bonus could not be verified from this transaction.' : 'Confirmed bonus in ATLAS.';
     const apr = el('td', percent(row.aprPct));
     if (row.aprPct == null) apr.title = 'APR requires a verified ATLAS bonus, locked capital, and a positive holding time.';
     if (row.walletOnly) fleet.title = 'Attributed through a resolved wallet for this profile.';
-    tr.append(fleet, outbid, held, locked, bonus, apr);
+    tr.append(fleet, outbid, held, locked, myBid, challengerBid, bonus, apr);
     body.append(tr);
   }
   const counts = `${report.rows.length} outbid · ${report.verifiedCount} verified bonuses · ${report.aprCount} with APR`;

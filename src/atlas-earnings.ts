@@ -77,6 +77,11 @@ export function earningsEvidence(tx: any, keys: string[], events: AuditEvent[]):
   });
 }
 
+interface EarningsBid {
+  amount: number;
+  currency: 'ATLAS' | 'Points' | null;
+}
+
 export interface AtlasEarningsRow {
   id: string;
   contract: string;
@@ -85,6 +90,8 @@ export interface AtlasEarningsRow {
   outbidAtMs: number;
   heldMs: number | null;
   atlasLocked: number | null;
+  myBid: EarningsBid | null;
+  challengerBid: EarningsBid | null;
   bonusAtlas: number | null;
   aprPct: number | null;
   walletOnly: boolean;
@@ -102,6 +109,15 @@ function units(value: unknown): bigint | null {
   if (typeof value !== 'bigint' && !(typeof value === 'string' && /^\d+$/.test(value))) return null;
   const amount = BigInt(value);
   return amount >= 0n && amount <= BigInt(Number.MAX_SAFE_INTEGER) ? amount : null;
+}
+
+function earningsBid(atlas: bigint | null, points: bigint | null): EarningsBid | null {
+  const hasAtlas = atlas !== null && atlas > 0n;
+  const hasPoints = points !== null && points > 0n;
+  if (hasAtlas && !hasPoints) return { amount: Number(atlas) / ATLAS_SCALE, currency: 'ATLAS' };
+  if (hasPoints && !hasAtlas) return { amount: Number(points) / ATLAS_SCALE, currency: 'Points' };
+  // Both currency fields are zero for a zero bid, regardless of its selected currency.
+  return atlas === 0n && points === 0n ? { amount: 0, currency: null } : null;
 }
 
 function annualized(bonus: bigint, atlasUnitMs: bigint): number | null {
@@ -156,6 +172,8 @@ export function calculateAtlasEarnings(events: HistoryEvidence[], profile: strin
     }
     rows.push({ id: `${e.signature}:${e.index}`, contract: event.contract, borrower, signature: e.signature,
       outbidAtMs: e.at, heldMs, atlasLocked: locked === null ? null : Number(locked) / ATLAS_SCALE,
+      myBid: earningsBid(bid, units(match?.event.bidPoints)),
+      challengerBid: earningsBid(units(event.newBidAtlas), units(event.newBidPoints)),
       bonusAtlas: bonus === null ? null : Number(bonus) / ATLAS_SCALE, aprPct, walletOnly });
   };
 

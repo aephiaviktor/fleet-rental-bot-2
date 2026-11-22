@@ -57,6 +57,23 @@ test('does not confuse a reused queue, a different profile, an own-wallet replac
   assert.equal(report.totalBonusAtlas, 24);
 });
 
+test('reports historical bids with their currency and distinguishes an unknown bid from zero', () => {
+  const placed = place(1, 1, 'points bid', 4500, 0);
+  placed.event.bidPoints = dust(12.345);
+  const taken = outbid(2, 2, 'points bid', 100);
+  taken.event.newBidAtlas = dust(1300.456);
+  taken.event.newBidPoints = '0';
+  const missing = outbid(3, 3, 'unmatched bid', 0);
+  missing.event.newBidAtlas = missing.event.newBidPoints = '0';
+
+  const [unmatched, matched] = calculateAtlasEarnings([placed, taken, missing], profile, scope).rows;
+  assert.equal(unmatched.myBid, null);
+  assert.deepEqual(unmatched.challengerBid, { amount: 0, currency: null });
+  assert.deepEqual(matched.myBid, { amount: 12.345, currency: 'Points' });
+  assert.deepEqual(matched.challengerBid, { amount: 1300.456, currency: 'ATLAS' });
+  assert.equal(matched.atlasLocked, 4500);
+});
+
 test('reads the confirmed mainnet bonus instead of the refund and verifies the placement profile from the instruction', async () => {
   const tx = JSON.parse(await readFile('test/fixtures/history/264x.json', 'utf8'));
   const sig = tx.transaction.signatures[0];
@@ -106,6 +123,8 @@ test('enriches legacy saved payout evidence with a read-only transaction lookup 
     assert.equal(report.totalBonusAtlas, 649.437);
     assert.equal(report.aprPct, null);
     assert.equal(report.rows.length, 1);
+    assert.equal(report.rows[0].myBid, null);
+    assert.deepEqual(report.rows[0].challengerBid, { amount: 710, currency: 'ATLAS' });
     assert.equal(readAtlasEarnings(file, 'other profile').rows.length, 0);
     assert.equal(readRentalHistory(file, profile).length, 0);
     assert.equal(requests, 1);

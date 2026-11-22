@@ -16,6 +16,13 @@ globalThis.RulesDisplay = {
     const days = seconds => (seconds / 86400).toLocaleString(undefined, { maximumFractionDigits: 6 });
     return `${days(min)}–${days(max)}`;
   },
+  durationWarning(requestedSeconds, snapshot) {
+    const range = RulesDisplay.allowedDays(snapshot);
+    if (range === '—' || !Number.isFinite(requestedSeconds)) return null;
+    if (requestedSeconds >= snapshot.minimumDurationSeconds && requestedSeconds <= snapshot.maximumDurationSeconds) return null;
+    const days = (requestedSeconds / 86400).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    return `Requested ${days} days. Allowed Days: ${range}.`;
+  },
   cancelDelay(seconds) {
     if (!Number.isSafeInteger(seconds) || seconds < 0) return '—';
     if (seconds === 0) return 'Instant';

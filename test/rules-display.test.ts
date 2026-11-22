@@ -96,3 +96,14 @@ test('funding distinguishes limit blockers from genuine balance shortfalls', () 
   assert.equal(format({ status: 'ready' }), 'Ready');
   assert.equal(format(null), 'Unknown');
 });
+
+test('Check flags Days outside the contract range and accepts both exact boundaries', () => {
+  const warning = context.RulesDisplay.durationWarning;
+  const terms = { minimumDurationSeconds: 7 * 86400 + 3600, maximumDurationSeconds: 14 * 86400 };
+  assert.match(warning(7 * 86400, terms), /Requested 7 days/);
+  assert.match(warning(14 * 86400 + 1, terms), /Allowed Days/);
+  assert.equal(warning(terms.minimumDurationSeconds, terms), null);
+  assert.equal(warning(terms.maximumDurationSeconds, terms), null);
+  assert.equal(warning(86400, { ...terms, maximumDurationSeconds: 0 }), null);
+  assert.equal(warning(86400, null), null);
+});

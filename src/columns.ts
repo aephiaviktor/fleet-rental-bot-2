@@ -52,7 +52,7 @@ export const COLUMN_DEFINITIONS: readonly ColumnDefinition[] = [
   { id: 'estimatedNetValueAtlas', label: 'Estimated net value / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'maximumRentalRate', label: 'Maximum rental rate / day (ATLAS)', group: 'economics', defaultVisible: true },
   { id: 'maximumReservationBid', label: 'Maximum reservation bid (ATLAS)', group: 'economics', defaultVisible: true },
-  { id: 'funding', label: 'Funding: available ATLAS versus bid + rental escrow (per fleet)', group: 'economics', defaultVisible: true },
+  { id: 'funding', label: 'Check', group: 'economics', defaultVisible: true },
   { id: 'canSafelyOperate', label: 'Safe to operate', group: 'decision', defaultVisible: true },
   { id: 'comment', label: 'Note', group: 'decision', defaultVisible: true },
   { id: 'endingIn', label: 'Ending In', group: 'reservation', defaultVisible: true },

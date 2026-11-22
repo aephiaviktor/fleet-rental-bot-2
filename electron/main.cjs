@@ -714,6 +714,10 @@ ipcMain.handle('earnings:load', async (_event, refresh = false) => {
         try { await refreshStoredRentalHistory(settings, scannedWallets); } catch { failed = true; }
         const { backfillEarningsEvidence } = await domainModule('history-backfill');
         await backfillEarningsEvidence(file, settings.playerProfile, roles.addresses, settings.rpcUrl);
+        const { refreshEarningsRates } = await domainModule('earnings-prices');
+        const { rows } = readAtlasEarnings(file, settings.playerProfile, roles.addresses);
+        const bidTimes = rows.filter(row => row.solFeesAtlas === null && row.bidCostSol > 0).map(row => row.bidAtMs);
+        try { await refreshEarningsRates(file, bidTimes); } catch { failed = true; }
         return failed;
       })().finally(() => { earningsRefreshes.delete(key); });
       earningsRefreshes.set(key, task);

@@ -7,14 +7,46 @@ import type { AuditEvent } from '@sly-rentals/core/audit';
 import type { HistoryEvidence } from './history-backfill.js';
 import { NEXT_GEN_SRSLY_PROGRAM_ID as PROGRAM } from './model.js';
 import { MAINNET_SAGE_PROGRAM } from './rental-sdk.js';
+import { bidPriceDay, readEarningsRates } from './earnings-prices.js';
 
 const core = createRequire(import.meta.url)('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
 const YEAR_MS = 365n * 86_400_000n;
 const ATLAS_SCALE = 100_000_000;
+const LAMPORTS_PER_SOL = 1_000_000_000;
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+// Published Helius Sender and Jito block engine tip accounts. The network
+// fee already contains the priority fee. A tip is a separate SOL transfer.
+const TIP_ACCOUNTS = new Set([
+  '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE', 'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
+  '9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta', '5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn',
+  '2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD', '2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ',
+  'wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF', '3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT',
+  '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey', '4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or',
+  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5', 'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+  'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL', 'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+  'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh', 'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+  'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49', '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+]);
 
 export interface EarningsEvidence {
   reservationProfile?: string | null;
   bonusAtlasUnits?: string | null;
+  bidCostLamports?: string | null;
+}
+
+function bidCost(tx: any, keys: string[], instructions: any[], borrower: string): string | null {
+  const fee = tx.meta.fee;
+  if (!Number.isSafeInteger(fee) || fee <= 0 || keys[0] !== borrower) return null;
+  let cost = BigInt(fee);
+  for (const ix of instructions) {
+    if (keys[ix.programIdIndex] !== SYSTEM_PROGRAM || keys[ix.accounts?.[0]] !== borrower
+      || !TIP_ACCOUNTS.has(keys[ix.accounts?.[1]])) continue;
+    try {
+      const bytes = Buffer.from(getBase58Encoder().encode(ix.data));
+      if (bytes.length === 12 && bytes.readUInt32LE(0) === 2) cost += bytes.readBigUInt64LE(4);
+    } catch { return null; }
+  }
+  return String(cost);
 }
 
 /** Identify ATLAS refund logs emitted by SRSLY itself. The refund includes principal. */
@@ -49,7 +81,7 @@ export function earningsEvidence(tx: any, keys: string[], events: AuditEvent[]):
     if (keys[ix.programIdIndex] !== PROGRAM || !ix.data || !Array.isArray(ix.accounts) || ix.accounts.length < 25) return [];
     const at = (index: number) => keys[ix.accounts[index]];
     // 21 fixed ReserveRental accounts in next-gen SRSLY, followed by the SAGE profile.
-    if (at(14) !== MAINNET_SAGE_PROGRAM || at(20) !== '11111111111111111111111111111111' || !at(21)) return [];
+    if (at(14) !== MAINNET_SAGE_PROGRAM || at(20) !== SYSTEM_PROGRAM || !at(21)) return [];
     try {
       const bytes = getBase58Encoder().encode(ix.data);
       if (!core.RESERVE_RENTAL_DISCRIMINATOR.every((byte, index) => byte === bytes[index])) return [];
@@ -59,12 +91,14 @@ export function earningsEvidence(tx: any, keys: string[], events: AuditEvent[]):
   });
   const refunds = atlasRefunds(tx.meta.logMessages || []);
   const knockoffs = events.filter(event => event.type === 'ReservationKnockedOff');
+  const placementCount = events.filter(event => event.type === 'ReservationPlaced').length;
   return events.map(event => {
     if (event.type === 'ReservationPlaced') {
       const matches = reserves.filter(ix => ix.contract === event.contract && ix.rentalState === event.rentalState
         && ix.borrower === event.borrower && ix.bidAtlas === event.bidAtlas && ix.bidPoints === event.bidPoints);
       const profiles = new Set(matches.map(ix => ix.profile));
-      return { reservationProfile: profiles.size === 1 ? matches[0].profile : null };
+      return { reservationProfile: profiles.size === 1 ? matches[0].profile : null,
+        bidCostLamports: placementCount === 1 ? bidCost(tx, keys, instructions, event.borrower) : null };
     }
     if (event.type === 'ReservationKnockedOff') {
       if (event.bonus === 0n) return { bonusAtlasUnits: '0' };
@@ -93,6 +127,10 @@ export interface AtlasEarningsRow {
   myBid: EarningsBid | null;
   challengerBid: EarningsBid | null;
   bonusAtlas: number | null;
+  bidAtMs: number | null;
+  bidCostSol: number | null;
+  solFeesAtlas: number | null;
+  netProfitAtlas: number | null;
   aprPct: number | null;
   walletOnly: boolean;
 }
@@ -120,18 +158,19 @@ function earningsBid(atlas: bigint | null, points: bigint | null): EarningsBid |
   return atlas === 0n && points === 0n ? { amount: 0, currency: null } : null;
 }
 
-function annualized(bonus: bigint, atlasUnitMs: bigint): number | null {
-  return atlasUnitMs > 0n ? Number(bonus * YEAR_MS * 100n) / Number(atlasUnitMs) : null;
+function annualized(profit: bigint, atlasUnitMs: bigint): number | null {
+  return atlasUnitMs > 0n ? Number(profit * YEAR_MS * 100n) / Number(atlasUnitMs) : null;
 }
 
 /** Rebuild each contract's queue from saved confirmed evidence. State addresses can be reused. */
-export function calculateAtlasEarnings(events: HistoryEvidence[], profile: string, wallets: readonly string[]): AtlasEarningsReport {
+export function calculateAtlasEarnings(events: HistoryEvidence[], profile: string, wallets: readonly string[],
+  atlasPerSol: ReadonlyMap<number, number> = new Map()): AtlasEarningsReport {
   const walletSet = new Set(wallets);
   const rows: AtlasEarningsRow[] = [];
   const pending = new Map<string, HistoryEvidence>();
   const bySlot = new Map<number, Map<string, HistoryEvidence[]>>();
   const seen = new Set<string>();
-  let total = 0n, pooledBonus = 0n, pooledCapitalTime = 0n, aprCount = 0, verifiedCount = 0;
+  let total = 0n, pooledProfit = 0n, pooledCapitalTime = 0n, aprCount = 0, verifiedCount = 0;
   for (const e of events) {
     const id = `${e.signature}:${e.index}`;
     if (!e.event?.contract || !e.signature || !Number.isSafeInteger(e.slot) || !Number.isSafeInteger(e.at) || e.at <= 0 || seen.has(id)) continue;
@@ -160,21 +199,31 @@ export function calculateAtlasEarnings(events: HistoryEvidence[], profile: strin
     const locked = bid !== null && escrow !== null ? bid + escrow : null;
     const heldMs = match ? e.at - match.at : null;
     const exposure = locked !== null && heldMs !== null ? locked * BigInt(heldMs) : 0n;
-    const aprPct = bonus !== null ? annualized(bonus, exposure) : null;
+    const bidAtMs = match?.at ?? null;
+    const lamports = units(match?.bidCostLamports);
+    const bidCostSol = lamports === null ? null : Number(lamports) / LAMPORTS_PER_SOL;
+    const rate = bidAtMs === null ? undefined : atlasPerSol.get(bidPriceDay(bidAtMs));
+    const feeAmount = bidCostSol === 0 ? 0 : bidCostSol !== null && rate && rate > 0 ? bidCostSol * rate : null;
+    const feeDust = feeAmount === null ? null : Math.round(feeAmount * ATLAS_SCALE);
+    const fees = feeDust !== null && Number.isSafeInteger(feeDust) ? BigInt(feeDust) : null;
+    const profit = bonus !== null && fees !== null ? bonus - fees : null;
+    const aprPct = profit === null ? null : annualized(profit, exposure);
     if (bonus !== null) {
       total += bonus;
       verifiedCount++;
-      if (aprPct !== null) {
-        pooledBonus += bonus;
-        pooledCapitalTime += exposure;
-        aprCount++;
-      }
+    }
+    if (profit !== null && aprPct !== null) {
+      pooledProfit += profit;
+      pooledCapitalTime += exposure;
+      aprCount++;
     }
     rows.push({ id: `${e.signature}:${e.index}`, contract: event.contract, borrower, signature: e.signature,
       outbidAtMs: e.at, heldMs, atlasLocked: locked === null ? null : Number(locked) / ATLAS_SCALE,
       myBid: earningsBid(bid, units(match?.event.bidPoints)),
       challengerBid: earningsBid(units(event.newBidAtlas), units(event.newBidPoints)),
-      bonusAtlas: bonus === null ? null : Number(bonus) / ATLAS_SCALE, aprPct, walletOnly });
+      bonusAtlas: bonus === null ? null : Number(bonus) / ATLAS_SCALE, bidAtMs, bidCostSol,
+      solFeesAtlas: fees === null ? null : Number(fees) / ATLAS_SCALE,
+      netProfitAtlas: profit === null ? null : Number(profit) / ATLAS_SCALE, aprPct, walletOnly });
   };
 
   const lifecycle = new Set(['ReservationPlaced', 'ReservationKnockedOff', 'ReservationForceClosed', 'RentalCancelled', 'RentalAccepted', 'ContractCreated', 'ContractClosed']);
@@ -210,7 +259,7 @@ export function calculateAtlasEarnings(events: HistoryEvidence[], profile: strin
   }
   rows.sort((a, b) => b.outbidAtMs - a.outbidAtMs || a.id.localeCompare(b.id));
   return { rows, totalBonusAtlas: verifiedCount === 0 ? null : Number(total) / ATLAS_SCALE,
-    aprPct: annualized(pooledBonus, pooledCapitalTime), aprCount, verifiedCount };
+    aprPct: annualized(pooledProfit, pooledCapitalTime), aprCount, verifiedCount };
 }
 
 export function recordEarningsWalletScope(file: string, profile: string, wallets: readonly string[]): void {
@@ -235,6 +284,6 @@ export function readAtlasEarnings(file: string, profile: string, wallets?: reado
     const scope = scopeTable && wallets === undefined
       ? JSON.parse(String(db.prepare('SELECT payload FROM history_earnings_wallets WHERE profile=?').get(profile)?.payload || '[]')) as string[]
       : [];
-    return calculateAtlasEarnings(events, profile, wallets ?? scope);
+    return calculateAtlasEarnings(events, profile, wallets ?? scope, readEarningsRates(db));
   } finally { db.close(); }
 }

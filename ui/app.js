@@ -209,10 +209,15 @@ function renderAtlasEarnings(report) {
     const challengerBid = el('td', bid(row.challengerBid));
     const bonus = el('td', n(row.bonusAtlas));
     bonus.title = row.bonusAtlas == null ? 'An ATLAS bonus could not be verified from this transaction.' : 'Confirmed bonus in ATLAS.';
+    const fees = el('td', n(row.solFeesAtlas));
+    fees.title = row.bidCostSol == null ? 'The original bid fee could not be verified.'
+      : `${n(row.bidCostSol, 9)} SOL · ${row.solFeesAtlas == null ? 'Historical exchange rate unavailable.' : 'Converted at the prior UTC day’s close.'}`;
+    const net = el('td', n(row.netProfitAtlas));
+    net.title = 'Bonus earned minus the ATLAS equivalent of the fees paid to place the bid.';
     const apr = el('td', percent(row.aprPct));
-    if (row.aprPct == null) apr.title = 'APR requires a verified ATLAS bonus, locked capital, and a positive holding time.';
+    if (row.aprPct == null) apr.title = 'APR requires a verified bonus, priced bid fees, locked ATLAS, and a positive holding time.';
     if (row.walletOnly) fleet.title = 'Attributed through a resolved wallet for this profile.';
-    tr.append(fleet, outbid, held, locked, myBid, challengerBid, bonus, apr);
+    tr.append(fleet, outbid, held, locked, myBid, challengerBid, bonus, fees, net, apr);
     body.append(tr);
   }
   const counts = `${report.rows.length} outbid · ${report.verifiedCount} verified bonuses · ${report.aprCount} with APR`;

@@ -181,7 +181,7 @@ test('ATLAS Earned places both bids between locked ATLAS and bonus and displays 
   const [html, renderer] = await Promise.all([readFile('ui/index.html', 'utf8'), readFile('ui/app.js', 'utf8')]);
   const header = html.match(/class="rules-table earnings-table">\s*<thead>(.*?)<\/thead>/)?.[1] ?? '';
   assert.deepEqual([...header.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map(([, label]) => label),
-    ['Fleet', 'Outbid at (UTC)', 'Time held', 'ATLAS locked', 'My bid', 'Challenger bid', 'Bonus earned', 'APR']);
+    ['Fleet', 'Outbid at (UTC)', 'Time held', 'ATLAS locked', 'My bid', 'Challenger bid', 'Bonus earned', 'SOL fees (ATLAS)', 'Net profit (ATLAS)', 'APR']);
 
   class Element {
     children: Element[] = [];
@@ -200,12 +200,14 @@ test('ATLAS Earned places both bids between locked ATLAS and bonus and displays 
   render({ configured: true, totalBonusAtlas: 218.9781, aprPct: 42.1234, verifiedCount: 1, aprCount: 1, rows: [{
     fleetName: 'TPT-M', atlasLocked: 49945.1234, myBid: { amount: 12.3456, currency: 'Points' },
     challengerBid: { amount: 2404.129, currency: 'ATLAS' }, bonusAtlas: 218.9781, aprPct: 42.1234,
+    bidCostSol: 0.0002053, solFeesAtlas: 161.3544, netProfitAtlas: 57.6237,
   }] });
   const formatted = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   assert.equal(elements.get('earnings-total')!.textContent, `${formatted(218.9781)} ATLAS`);
   assert.equal(elements.get('earnings-apr')!.textContent, `${formatted(42.1234)}%`);
   assert.deepEqual(elements.get('earnings-body')!.children[0].children.slice(3).map(cell => cell.textContent), [
-    formatted(49945.1234), `${formatted(12.3456)} Points`, `${formatted(2404.129)} ATLAS`, formatted(218.9781), `${formatted(42.1234)}%`,
+    formatted(49945.1234), `${formatted(12.3456)} Points`, `${formatted(2404.129)} ATLAS`, formatted(218.9781),
+    formatted(161.3544), formatted(57.6237), `${formatted(42.1234)}%`,
   ]);
 });
 

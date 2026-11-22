@@ -186,7 +186,7 @@ export async function backfillEarningsEvidence(file: string, profile: string, wa
     for (const e of stored) {
       if (e.event.type === 'ReservationKnockedOff' && e.bonusAtlasUnits === undefined
         && owned.has(e.event.displacedBorrower) && String(e.event.bonus) !== '0') signatures.add(e.signature);
-      if (e.event.type === 'ReservationPlaced' && e.reservationProfile === undefined
+      if (e.event.type === 'ReservationPlaced' && (e.reservationProfile === undefined || e.bidCostLamports === undefined)
         && toInspect.has(`${e.event.contract}:${e.event.borrower}`)) signatures.add(e.signature);
     }
     const update = db.prepare('UPDATE history_evidence SET payload=? WHERE profile=? AND signature=? AND idx=?');
@@ -210,8 +210,8 @@ export async function backfillEarningsEvidence(file: string, profile: string, wa
           && String(e.event.bidAtlas) === String(item.event.bidAtlas) && String(e.event.bidPoints) === String(item.event.bidPoints)
           && String(e.event.escrow) === String(item.event.escrow));
         if (matches.length !== 1) continue;
-        const { bonusAtlasUnits, reservationProfile } = matches[0];
-        update.run(JSON.stringify({ ...item, ...{ bonusAtlasUnits, reservationProfile } }), profile, signature, item.index);
+        const { bonusAtlasUnits, reservationProfile, bidCostLamports } = matches[0];
+        update.run(JSON.stringify({ ...item, bonusAtlasUnits, reservationProfile, bidCostLamports }), profile, signature, item.index);
       }
       missingEarningsEvidence.set(signature, Date.now() + 5 * 60_000);
     }

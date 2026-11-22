@@ -64,6 +64,10 @@ jobs:
       - name: Verify packaged source
         if: steps.version.outputs.published != 'true'
         run: node scripts/verify-release.cjs release/win-unpacked/resources/app.asar
+      - name: Verify simultaneous portable launches
+        if: steps.version.outputs.published != 'true'
+        shell: pwsh
+        run: ./scripts/test-portable-launch.ps1 -Version '${{ steps.version.outputs.version }}'
       - name: Publish verified app release
         if: steps.version.outputs.published != 'true'
         shell: pwsh
@@ -79,7 +83,7 @@ jobs:
           "$hash  $name" | Set-Content release/SHA256SUMS -Encoding utf8
           $notes = "docs/releases/$version.md"
           if (-not (Test-Path $notes)) { throw "Missing release notes: $notes" }
-          $body = (Get-Content $notes -Raw) + "`nValidation: tests, typecheck, and packaged source verification passed on Windows.`n`nSHA-256: $hash`n"
+          $body = (Get-Content $notes -Raw) + "`nValidation: tests, typecheck, packaged source verification, and simultaneous portable launches passed on Windows.`n`nSHA-256: $hash`n"
           $body | Set-Content release/notes.md -Encoding utf8
           gh release view $tag --json isDraft 2>$null
           if ($LASTEXITCODE -ne 0) {

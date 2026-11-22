@@ -1,6 +1,6 @@
 {
   "name": "fleet-rental-bot-2",
-  "version": "0.1.57",
+  "version": "0.1.58",
   "private": true,
   "author": "Aephia Industries",
   "description": "Next-generation SRSLY fleet reservation watchlist and manager",
@@ -48,6 +48,9 @@
       ],
       "icon": "assets/fleet-rental-bot-2.ico",
       "artifactName": "Fleet-Rental-Bot-2-${version}-portable.${ext}"
+    },
+    "portable": {
+      "unpackDirName": true
     },
     "linux": {
       "target": [

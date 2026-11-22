@@ -2,7 +2,8 @@ param([Parameter(Mandatory)][string]$Version)
 
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path -LiteralPath "release/Fleet-Rental-Bot-2-$Version-portable.exe").Path
-$root = Join-Path ([IO.Path]::GetTempPath()) ('fleet-rental-bot-2-update-test-' + [guid]::NewGuid().ToString('N'))
+$tempRoot = (node -p "require('node:os').tmpdir()").Trim()
+$root = Join-Path $tempRoot ('fleet-rental-bot-2-update-test-' + [guid]::NewGuid().ToString('N'))
 $launches = @()
 
 try {
@@ -45,7 +46,17 @@ try {
     Split-Path -Parent $app.ExecutablePath
   }
   if (@($directories | Sort-Object -Unique).Count -ne $launches.Count) { throw 'Portable instances share an extraction directory.' }
+  foreach ($dir in $directories) {
+    $relative = [IO.Path]::GetRelativePath($tempRoot, $dir)
+    if ($relative.StartsWith('..') -or [IO.Path]::IsPathRooted($relative)) { throw 'Portable files were extracted outside the temporary directory.' }
+  }
   Write-Host "Verified simultaneous MUD and ONI startup with separate extraction directories for v$Version."
+} catch {
+  foreach ($launch in $launches) {
+    Get-CimInstance Win32_Process -Filter "ProcessId = $($launch.Process.Id) OR ParentProcessId = $($launch.Process.Id)" |
+      Select-Object Name, ProcessId, ParentProcessId, ExecutablePath | Format-Table -AutoSize | Out-Host
+  }
+  throw
 } finally {
   foreach ($launch in $launches) {
     if (!$launch.Process.HasExited) {

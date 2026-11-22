@@ -32,6 +32,7 @@
     "productName": "Fleet Rental Bot 2",
     "asar": true,
     "compression": "normal",
+    "beforePack": "./scripts/init-portable-plugins.cjs",
     "directories": {
       "output": "release"
     },

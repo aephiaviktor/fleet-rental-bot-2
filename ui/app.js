@@ -279,6 +279,9 @@ let latestBonusStatus = null;
 let bonusLoading = null;
 let bonusSaving = false;
 let bonusError = '';
+let bonusMarket = null;
+let bonusMarketRequest = null;
+let bonusMarketTimer = null;
 
 function renderBonusStrategy(force = false) {
   const panel = $('bonus-panel');
@@ -295,35 +298,49 @@ function renderBonusStrategy(force = false) {
   const note = $('bonus-status');
   note.textContent = bonusError || (bonusSaving ? 'Saving…' : report?.message) || '';
   note.classList.toggle('error', Boolean(bonusError));
-  if (!configuration || !profile) {
-    note.textContent ||= profile ? 'Loading Bonus Strategy…' : 'Configure a Player Profile in Settings.';
+  const market = bonusMarket && bonusMarket.rpcUrl === S.settings?.rpcUrl ? bonusMarket.report : null;
+  const marketNote = $('bonus-market-status');
+  const scanning = bonusMarketRequest && bonusMarketRequest.rpcUrl === S.settings?.rpcUrl;
+  $('bonus-scan').disabled = scanning;
+  marketNote.textContent = scanning ? 'Scanning SRSLY market…' : '';
+  if (!configuration) {
+    note.textContent ||= 'Loading Bonus Strategy…';
     return;
   }
+  if (!profile) note.textContent ||= 'Configure a Player Profile in Settings to enable FCFS.';
   const rules = new Map(configuration.rules.map(rule => [rule.contractAddress, rule]));
-  const rows = (S.document?.entries ?? []).filter(entry => entry.contractAddress).map(entry => {
-    const result = S.live.get(entry.id);
-    const row = result?.ok && result.row.entry.contractAddress === entry.contractAddress ? result.row : null;
-    const snapshot = row?.snapshot;
-    const rule = rules.get(entry.contractAddress) ?? { contractAddress: entry.contractAddress, fcfs: false, maximumBidAtlas: 0 };
-    const live = rule.fcfs ? report?.rows[entry.contractAddress] : null;
+  const watched = new Map((S.document?.entries ?? []).map(entry => [entry.contractAddress, entry]));
+  const catalog = new Map((market?.rows ?? []).map(row => [row.contractAddress, row]));
+  const contracts = new Set([...catalog.keys(), ...configuration.rules.filter(rule => rule.fcfs).map(rule => rule.contractAddress)]);
+  const rows = [...contracts].map(contractAddress => {
+    const listing = catalog.get(contractAddress);
+    const entry = watched.get(contractAddress);
+    const result = entry && S.live.get(entry.id);
+    const snapshot = result?.ok && result.row.entry.contractAddress === contractAddress ? result.row.snapshot : null;
+    const rule = rules.get(contractAddress) ?? { contractAddress, fcfs: false, maximumBidAtlas: 0 };
+    const live = rule.fcfs ? report?.rows[contractAddress] : null;
     return {
-      entry, rule, row, live,
-      name: snapshot?.fleetName || entry.label || entry.contractAddress,
-      rate: live?.rate ?? snapshot?.rentalRateAtlasPerDay,
-      duration: live?.minimumSeconds ?? snapshot?.minimumDurationSeconds,
-      ends: live?.rate == null ? snapshot?.activeRentalEndsAtMs : live.endsAtMs,
+      contractAddress, listing, entry, rule, live,
+      name: snapshot?.fleetName || listing?.fleetName || entry?.label || contractAddress,
+      rate: live?.rate ?? listing?.rate ?? snapshot?.rentalRateAtlasPerDay,
+      duration: live?.minimumSeconds ?? listing?.minimumSeconds ?? snapshot?.minimumDurationSeconds,
+      ends: live?.rate == null ? listing?.endsAtMs : live.endsAtMs,
     };
-  }).filter(({ rate, rule }) => rule.fcfs || rate == null || rate >= configuration.minimumRateAtlasPerDay);
+  }).filter(({ rate, rule }) => rule.fcfs || rate >= configuration.minimumRateAtlasPerDay);
+  if (!scanning) {
+    const visible = rows.filter(row => row.listing).length;
+    const count = market?.fetchedAtMs == null ? '' : `${visible} of ${catalog.size} reservable fleets`;
+    marketNote.textContent = market?.error ? [market.error, count && `Showing last scan · ${count}`].filter(Boolean).join(' ') : count;
+  }
   rows.sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity)
     || (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
-  for (const { entry, rule, row, live, name, rate, duration, ends } of rows) {
+  for (const { contractAddress, listing, entry, rule, live, name, rate, duration, ends } of rows) {
     const tr = el('tr');
     const fleet = el('td', name);
-    fleet.title = entry.contractAddress;
+    fleet.title = contractAddress;
     const opening = el('td', n(rate));
     opening.title = 'One day’s rate as the ATLAS premium, subject to the protocol minimum.';
-    const quote = row?.snapshot.currentMinimumBidAtlas ?? row?.snapshot.minimumTakeoverBidAtlas;
-    const nextBid = live ? live.bidAtlas : rate == null || quote == null ? null : Math.max(rate, quote);
+    const nextBid = live ? live.bidAtlas : ends > Date.now() ? listing?.bidAtlas : null;
     const estimate = nextBid == null || rate == null || duration == null ? null : nextBid + rate * duration / 86400;
     const required = el('td', n(live ? live.requiredAtlas : estimate));
     required.title = 'Quoted premium plus prepaid rent for the minimum allowed duration.';
@@ -332,7 +349,7 @@ function renderBonusStrategy(force = false) {
     const cap = input('number', rule.maximumBidAtlas || '', 'maximumBidAtlas');
     cap.min = '0';
     cap.step = '0.00000001';
-    cap.disabled = bonusSaving;
+    cap.disabled = !profile || bonusSaving;
     cap.setAttribute('aria-label', `Max bid (ATLAS) for ${name}`);
     cap.onchange = () => {
       if (cap.reportValidity()) void saveBonusRule({ ...rule, maximumBidAtlas: Number(cap.value) });
@@ -340,20 +357,51 @@ function renderBonusStrategy(force = false) {
     capCell.append(cap);
     const fcfsCell = el('td');
     const fcfs = input('checkbox', '', 'fcfs');
-    fcfs.checked = rule.fcfs;
-    fcfs.disabled = bonusSaving || (!rule.fcfs && rule.maximumBidAtlas <= 0);
-    fcfs.title = fcfs.disabled && !bonusSaving ? 'Set a positive Max bid to enable FCFS.' : '';
+    const legacyOrphan = rule.fcfs && !entry && !rule.market;
+    fcfs.checked = rule.fcfs && !legacyOrphan;
+    fcfs.disabled = !profile || bonusSaving || (!fcfs.checked && (!listing || rule.maximumBidAtlas <= 0));
+    if (!fcfs.checked && rule.maximumBidAtlas <= 0) fcfs.title = 'Set a positive Max bid to enable FCFS.';
     fcfs.setAttribute('aria-label', `FCFS for ${name}`);
-    fcfs.onchange = () => void saveBonusRule({ ...rule, fcfs: fcfs.checked });
+    fcfs.onchange = () => void saveBonusRule({ ...rule, fcfs: fcfs.checked, market: true });
     fcfsCell.append(fcfs);
-    const detail = !rule.fcfs ? 'Off' : !entry.enabled ? 'Fleet paused' : !entry.canSafelyOperate ? 'Fleet marked unsafe'
-      : row?.position?.status === 'defending' && !live ? 'Our bid is holding' : live?.detail || 'Waiting for live data';
+    const detail = rule.fcfs && entry?.enabled === false ? 'Fleet paused'
+      : rule.fcfs && entry?.canSafelyOperate === false ? 'Fleet marked unsafe'
+      : legacyOrphan && listing ? 'Enable FCFS here to resume'
+      : live?.detail || (!listing ? 'Awaiting market listing' : !listing.stateKnown ? 'Rental state unavailable'
+        : !ends || ends <= Date.now() ? 'Waiting for next rental' : 'Reservation available');
     const status = el('td', detail, live?.status === 'warning' ? 'funding-unknown' : live?.status === 'submitted' ? 'funding-ready' : '');
     tr.append(fleet, el('td', n(rate)), el('td', n(duration == null ? null : duration / 86400, 4)), opening,
       el('td', n(nextBid)), required, ending, capCell, fcfsCell, status);
     body.append(tr);
   }
-  if (!rows.length && !note.textContent) note.textContent = 'No matching fleets. Add contracts in Fleet Reservations or lower the minimum rate.';
+  if (!rows.length && !note.textContent && market?.fetchedAtMs) {
+    note.textContent = market.rows.length ? 'No fleets match the minimum rate.' : 'The market has no reservable fleets.';
+  }
+}
+
+async function scanBonusMarket(refresh = false) {
+  clearTimeout(bonusMarketTimer);
+  if ($('bonus-panel').hidden) return;
+  const rpcUrl = S.settings?.rpcUrl;
+  if (bonusMarketRequest?.rpcUrl === rpcUrl) return;
+  const request = { rpcUrl };
+  bonusMarketRequest = request;
+  renderBonusStrategy();
+  try {
+    const report = await window.fleetRentalBot.loadBonusMarket(refresh);
+    if (bonusMarketRequest === request && S.settings?.rpcUrl === rpcUrl) bonusMarket = { rpcUrl, report };
+  } catch (error) {
+    if (bonusMarketRequest === request && S.settings?.rpcUrl === rpcUrl) {
+      const cached = bonusMarket?.rpcUrl === rpcUrl ? bonusMarket?.report : null;
+      bonusMarket = { rpcUrl, report: { rows: cached?.rows ?? [], fetchedAtMs: cached?.fetchedAtMs, error: error.message } };
+    }
+  } finally {
+    if (bonusMarketRequest === request) {
+      bonusMarketRequest = null;
+      renderBonusStrategy();
+      if (!$('bonus-panel').hidden) bonusMarketTimer = setTimeout(() => void scanBonusMarket(), 60_000);
+    }
+  }
 }
 
 async function showBonusStrategy() {
@@ -361,6 +409,7 @@ async function showBonusStrategy() {
   bonusLoading = load;
   bonusError = '';
   renderBonusStrategy(true);
+  void scanBonusMarket();
   try {
     const result = await window.fleetRentalBot.loadBonusStrategy();
     if (bonusLoading !== load || (S.settings?.playerProfile || '') !== result.profile) return;
@@ -401,6 +450,7 @@ $('open-bonus').onclick = () => {
   selectMainPanel('open-bonus');
   void showBonusStrategy();
 };
+$('bonus-scan').onclick = () => void scanBonusMarket(true);
 $('bonus-min-rate').onchange = event => {
   if (event.target.reportValidity() && bonusStrategy) {
     void saveBonusConfiguration({ ...bonusStrategy.configuration, minimumRateAtlasPerDay: Number(event.target.value) });

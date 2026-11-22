@@ -20,6 +20,7 @@ let bonusTimer = null;
 let bonusPolling = false;
 let bonusGeneration = 0;
 let bonusStatus = { profile: '', rows: {}, message: '' };
+let bonusMarketCache = null;
 let aephiaAccessState = { status: 'unknown', message: 'Aephia API key validation required.', checkedAt: 0, tokenKey: '' };
 let aephiaValidationTimer = null;
 const LATEST_RELEASE_URL = 'https://api.github.com/repos/aephiaviktor/fleet-rental-bot-2/releases/latest';
@@ -255,9 +256,9 @@ async function pollBonusStrategy() {
     const [strategy, watchlist] = await Promise.all([
       loadBonusSettings(directory, settings.playerProfile), loadWatchlist(watchlistPath()),
     ]);
-    const armed = new Map(strategy.rules.filter(rule => rule.fcfs).map(rule => [rule.contractAddress, rule]));
-    const entries = watchlist.entries.filter(entry => armed.has(entry.contractAddress) && entry.enabled && entry.canSafelyOperate);
-    if (!entries.length || !current()) return;
+    const { selectBonusEntries } = await domainModule('bonus-strategy');
+    const armed = selectBonusEntries(strategy.rules, watchlist.entries);
+    if (!armed.length || !current()) return;
     if (!settings.useHeliusSender || !settings.hotWalletSecret || !settings.rpcUrl) {
       status.message = 'To run FCFS, configure the signing wallet and RPC and enable Helius Sender in Settings.';
       return;
@@ -267,8 +268,8 @@ async function pollBonusStrategy() {
       domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'),
     ]);
     if (!current()) return;
-    const fleets = await withRpcDeadline(AbortSignal.timeout(12_000), () => pollBonusFleets(entries.map(entry => entry.contractAddress), settings.rpcUrl));
-    const work = entries.map(entry => ({ entry, fleet: fleets.get(entry.contractAddress), rule: armed.get(entry.contractAddress) }));
+    const fleets = await withRpcDeadline(AbortSignal.timeout(12_000), () => pollBonusFleets(armed.map(({ entry }) => entry.contractAddress), settings.rpcUrl));
+    const work = armed.map(({ entry, rule }) => ({ entry, fleet: fleets.get(entry.contractAddress), rule }));
     work.sort((a, b) => (a.fleet?.snapshot.minimumDurationSeconds ?? Infinity) - (b.fleet?.snapshot.minimumDurationSeconds ?? Infinity));
     for (const { entry, fleet, rule } of work) {
       if (!current()) break;
@@ -630,6 +631,31 @@ ipcMain.handle('bonus:load', async event => {
     profile, configuration: await loadBonusSettings(app.getPath('userData'), profile),
     status: bonusStatus.profile === profile ? bonusStatus : null,
   };
+});
+
+ipcMain.handle('bonus:market', async (event, refresh) => {
+  await requireAephiaAccess();
+  requireTrustedUpdaterRenderer(event);
+  const { rpcUrl } = await loadRuntimeSettings();
+  if (bonusMarketCache?.rpcUrl !== rpcUrl) bonusMarketCache = { rpcUrl, report: null, pending: null };
+  const cache = bonusMarketCache;
+  if (cache.pending) return cache.pending;
+  if (refresh !== true && cache.report && Date.now() - cache.report.fetchedAtMs < 55_000) return cache.report;
+  cache.pending = (async () => {
+    try {
+      const [{ discoverBonusMarket }, { withRpcDeadline }] = await Promise.all([
+        domainModule('bonus-strategy'), domainModule('rpc-fetch-limiter'),
+      ]);
+      const rows = await withRpcDeadline(AbortSignal.timeout(120_000), () => discoverBonusMarket(rpcUrl));
+      cache.report = { rows, fetchedAtMs: Date.now(), error: null };
+      return cache.report;
+    } catch {
+      return { rows: cache.report?.rows ?? [], fetchedAtMs: cache.report?.fetchedAtMs ?? null, error: 'Market scan unavailable. Check the configured RPC.' };
+    } finally {
+      cache.pending = null;
+    }
+  })();
+  return cache.pending;
 });
 
 ipcMain.handle('bonus:save', async (event, profile, configuration) => {

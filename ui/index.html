@@ -7,10 +7,14 @@
       <h2>Bonus Strategy</h2>
       <p>FCFS reserves at the minimum rental duration and overbids while the current rental has at least 24 hours left.</p>
     </div>
-    <label for="bonus-min-rate">Min rate/d (ATLAS)
-      <input id="bonus-min-rate" type="number" min="0" step="0.00000001" title="Filters available fleets. Enabled FCFS fleets stay visible.">
-    </label>
+    <div class="bonus-controls">
+      <label for="bonus-min-rate">Min rate/d (ATLAS)
+        <input id="bonus-min-rate" type="number" min="0" step="0.00000001" title="Filters available fleets. Enabled FCFS fleets stay visible.">
+      </label>
+      <button id="bonus-scan" type="button">Scan market</button>
+    </div>
   </div>
+  <p id="bonus-market-status" class="earnings-note" role="status"></p>
   <p id="bonus-status" class="earnings-note" role="status"></p>
   <div class="rules-table-scroll">
     <table class="rules-table bonus-table">

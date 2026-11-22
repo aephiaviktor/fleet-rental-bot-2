@@ -9,6 +9,8 @@ export interface BonusRule {
   contractAddress: string;
   fcfs: boolean;
   maximumBidAtlas: number;
+  /** Explicit FCFS authorization from the market list, also valid outside the watchlist. */
+  market?: true;
 }
 
 export interface BonusStrategySettings {
@@ -39,7 +41,7 @@ function validateSettings(value: BonusStrategySettings): BonusStrategySettings {
     const contractAddress = requireSolanaAddress(rule.contractAddress, 'Rental contract');
     if (contracts.has(contractAddress)) throw new Error('Bonus Strategy fleet rules must be unique.');
     contracts.add(contractAddress);
-    return { contractAddress, fcfs: rule.fcfs, maximumBidAtlas: rule.maximumBidAtlas };
+    return { contractAddress, fcfs: rule.fcfs, maximumBidAtlas: rule.maximumBidAtlas, ...(rule.market === true ? { market: true as const } : {}) };
   });
   return { minimumRateAtlasPerDay: value.minimumRateAtlasPerDay, rules };
 }

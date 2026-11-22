@@ -28,10 +28,11 @@ prevent duplicate automatic sends for the same row and rental end across refresh
 
 ## Bonus Strategy
 
-Bonus Strategy lists fleets from Fleet Reservations for the current Player Profile. The
+Bonus Strategy scans the SRSLY market for contracts that accept reservations. The
 Min rate/d filter defaults to 3,000 ATLAS and the list puts the shortest minimum rental
-durations first. Set a positive Max bid and enable FCFS on the fleets you want to bid on.
-FCFS requires the signing wallet, Helius Sender, and a fleet marked enabled and safe.
+durations first. Set a positive Max bid and enable FCFS directly on a market listing.
+FCFS is saved per Player Profile and uses the signing wallet and Helius Sender.
+For fleets also in Fleet Reservations, FCFS checks that the fleet is enabled and safe.
 
 The bot watches the next reservation slot during the active rental. It uses the contract's
 minimum allowed duration and an opening ATLAS premium of one day's rate, raised if the

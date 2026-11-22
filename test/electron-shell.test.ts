@@ -142,7 +142,7 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(preload, /access:unlock/);
   assert.match(access, /https:\/\/api\.aephia\.com\/token\/validate/);
   assert.match(main, /requireAephiaAccess/);
-  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'rpc-usage:day', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate', 'lcfs:state', 'bonus:load', 'bonus:save']) {
+  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'rpc-usage:day', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate', 'lcfs:state', 'bonus:load', 'bonus:market', 'bonus:save']) {
     const start = main.indexOf(`ipcMain.handle('${channel}'`);
     assert.notEqual(start, -1, `${channel} handler must exist`);
     assert.match(main.slice(start, start + 220), /await requireAephiaAccess\(\)/, `${channel} must fail closed behind Aephia access`);

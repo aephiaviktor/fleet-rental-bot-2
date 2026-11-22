@@ -1,8 +1,9 @@
 import {
-  address, createSolanaRpc, getSignatureFromTransaction, getTransactionDecoder, signature,
+  address, createSolanaRpc, fetchEncodedAccounts, getSignatureFromTransaction, getTransactionDecoder, signature,
   type Base64EncodedWireTransaction, type Instruction,
 } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { clearPendingBonusBid, readPendingBonusBid, savePendingBonusBid, type BonusRule } from './bonus-store.js';
 import { loadAtlasBalance, recordPendingFunding, requiredAtlasFunding, withFundingLock } from './funding.js';
@@ -10,7 +11,7 @@ import { prepareSenderTransaction, submitPreparedToHelius } from './lcfs.js';
 import { NEXT_GEN_SRSLY_PROGRAM_ID, type FleetContractSnapshot, type FleetWatchEntry } from './model.js';
 import type { AtlasReservationPlan } from './reservation-plan.js';
 import { loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
-import { rentalSdk } from './rental-sdk.js';
+import { MAINNET_SAGE_PROGRAM, rentalSdk } from './rental-sdk.js';
 import { recordBidIntent } from './rental-history.js';
 import { withRpcDeadline } from './rpc-fetch-limiter.js';
 import type { AppSettings } from './settings-store.js';
@@ -18,14 +19,27 @@ import { buildUnsignedAtlasReservation } from './unsigned-reservation.js';
 
 export const BONUS_OVERBID_MIN_REMAINING_MS = 24 * 60 * 60 * 1_000;
 const NO_RENTAL = '11111111111111111111111111111111';
-const { fetchAllMaybeContractState, fetchAllMaybeRentalState, RentalStatus } = createRequire(import.meta.url)(
+const { fetchAllMaybeContractState, fetchAllMaybeRentalState, getFleetDecoder, RentalStatus } = createRequire(import.meta.url)(
   '@sly-rentals/core/codama',
 ) as typeof import('@sly-rentals/core/codama');
+type BonusEntry = Pick<FleetWatchEntry, 'contractAddress' | 'enabled' | 'canSafelyOperate'>;
+
+export function selectBonusEntries(rules: readonly BonusRule[], watchlist: readonly BonusEntry[]) {
+  const watched = new Map(watchlist.map(entry => [entry.contractAddress, entry]));
+  return rules.flatMap(rule => {
+    if (!rule.fcfs) return [];
+    const entry = watched.get(rule.contractAddress);
+    if (entry) return entry.enabled && entry.canSafelyOperate ? [{ entry, rule }] : [];
+    // Pre-market rules were inactive if their watchlist contract had been removed.
+    return rule.market ? [{ entry: { contractAddress: rule.contractAddress, enabled: true, canSafelyOperate: true }, rule }] : [];
+  });
+}
+
 type ReadyPlan = Extract<AtlasReservationPlan, { kind: 'ready' }> & { requiredAtlas: number; overbid: boolean; sendDeadlineMs: number };
 type BonusPlan = ReadyPlan | { kind: 'blocked'; detail: string };
 
 export function planBonusReservation(
-  entry: FleetWatchEntry, rule: BonusRule, snapshot: FleetContractSnapshot, ours: boolean, nowMs: number,
+  entry: BonusEntry, rule: BonusRule, snapshot: FleetContractSnapshot, ours: boolean, nowMs: number,
 ): BonusPlan {
   const blocked = (detail: string): BonusPlan => ({ kind: 'blocked', detail });
   if (!entry.enabled || !rule.fcfs) return blocked('FCFS paused');
@@ -73,6 +87,37 @@ export async function readBonusFleet(contractAddress: string, rpcUrl: string) {
 type BonusFleet = Awaited<ReturnType<typeof readBonusFleet>>;
 type RuntimeSettings = AppSettings & { hotWalletSecret: string };
 
+type ContractAccount = ContractSnapshot['contract'];
+type Rpc = ReturnType<typeof createSolanaRpc>;
+const BATCH_SIZE = 50;
+
+async function readBonusSnapshots(
+  rpc: Rpc, contracts: ContractAccount[], config: ContractSnapshot['config'], nowSeconds: number, receivedAtMs: number,
+): Promise<Map<string, BonusFleet>> {
+  const sdk = rentalSdk();
+  const rentalAddresses = [...new Set(contracts.flatMap(({ data }) => [data.activeRental, data.queuedRental]))]
+    .filter(rental => rental !== NO_RENTAL);
+  const rentals = rentalAddresses.length
+    ? await fetchAllMaybeRentalState(rpc, rentalAddresses, { commitment: 'finalized' }) : [];
+  const byAddress = new Map(rentals.filter(account => account.exists).filter(account => account.programAddress === NEXT_GEN_SRSLY_PROGRAM_ID)
+    .map(account => [account.address, account]));
+  const fleets = new Map<string, BonusFleet>();
+  for (const contract of contracts) {
+    const { activeRental: active, queuedRental: queued } = contract.data;
+    const activeRental = byAddress.get(active) ?? null;
+    const queuedRental = byAddress.get(queued) ?? null;
+    if ((active !== NO_RENTAL && (activeRental?.data.contract !== contract.address || activeRental.data.status !== RentalStatus.Active))
+      || (queued !== NO_RENTAL && (queuedRental?.data.contract !== contract.address || queuedRental.data.status !== RentalStatus.Queued))) continue;
+    const state = { config, contract, activeRental, queuedRental, nowSeconds };
+    const raw = {
+      ...state, minimumBid: sdk.computeMinimumBidFromSnapshot(state),
+      effectiveRate: sdk.rateAfterStaleDecay(contract.data, config.data, nowSeconds),
+    };
+    fleets.set(contract.address, { raw, snapshot: mapContractSnapshot(raw), receivedAtMs });
+  }
+  return fleets;
+}
+
 /** Poll armed fleets in batches. A bid still requires an individual fresh read. */
 export async function pollBonusFleets(contracts: string[], rpcUrl: string): Promise<Map<string, BonusFleet>> {
   const rpc = createSolanaRpc(rpcUrl);
@@ -80,30 +125,70 @@ export async function pollBonusFleets(contracts: string[], rpcUrl: string): Prom
   const receivedAtMs = performance.now();
   const [config, nowSeconds] = await Promise.all([sdk.fetchConfig(rpcUrl), sdk.fetchChainNowSeconds(rpcUrl)]);
   const fleets = new Map<string, BonusFleet>();
-  for (let offset = 0; offset < contracts.length; offset += 50) {
-    const accounts = await fetchAllMaybeContractState(rpc, contracts.slice(offset, offset + 50).map(address), { commitment: 'finalized' });
+  for (let offset = 0; offset < contracts.length; offset += BATCH_SIZE) {
+    const accounts = await fetchAllMaybeContractState(rpc, contracts.slice(offset, offset + BATCH_SIZE).map(address), { commitment: 'finalized' });
     const valid = accounts.filter(account => account.exists).filter(account => account.programAddress === NEXT_GEN_SRSLY_PROGRAM_ID);
-    const rentalAddresses = [...new Set(valid.flatMap(({ data }) => [data.activeRental, data.queuedRental]))]
-      .filter(rental => rental !== NO_RENTAL);
-    const rentals = rentalAddresses.length
-      ? await fetchAllMaybeRentalState(rpc, rentalAddresses, { commitment: 'finalized' }) : [];
-    const byAddress = new Map(rentals.filter(account => account.exists).filter(account => account.programAddress === NEXT_GEN_SRSLY_PROGRAM_ID)
-      .map(account => [account.address, account]));
-    for (const contract of valid) {
-      const { activeRental: active, queuedRental: queued } = contract.data;
-      const activeRental = byAddress.get(active) ?? null;
-      const queuedRental = byAddress.get(queued) ?? null;
-      if ((active !== NO_RENTAL && (activeRental?.data.contract !== contract.address || activeRental.data.status !== RentalStatus.Active))
-        || (queued !== NO_RENTAL && (queuedRental?.data.contract !== contract.address || queuedRental.data.status !== RentalStatus.Queued))) continue;
-      const state = { config, contract, activeRental, queuedRental, nowSeconds };
-      const raw = {
-        ...state, minimumBid: sdk.computeMinimumBidFromSnapshot(state),
-        effectiveRate: sdk.rateAfterStaleDecay(contract.data, config.data, nowSeconds),
-      };
-      fleets.set(contract.address, { raw, snapshot: mapContractSnapshot(raw), receivedAtMs });
-    }
+    for (const [contract, snapshot] of await readBonusSnapshots(rpc, valid, config, nowSeconds, receivedAtMs)) fleets.set(contract, snapshot);
   }
   return fleets;
+}
+
+export interface BonusMarketFleet {
+  contractAddress: string;
+  fleetName: string;
+  rate: number;
+  minimumSeconds: number;
+  endsAtMs: number | null;
+  bidAtlas: number | null;
+  stateKnown: boolean;
+}
+
+const FLEET_DISCRIMINATOR = createHash('sha256').update('account:Fleet').digest().subarray(0, 8);
+
+export async function discoverBonusMarket(rpcUrl: string): Promise<BonusMarketFleet[]> {
+  const sdk = rentalSdk();
+  const rpc = createSolanaRpc(rpcUrl);
+  const receivedAtMs = performance.now();
+  const [listed, config, nowSeconds] = await Promise.all([sdk.fetchAllContracts(rpcUrl), sdk.fetchConfig(rpcUrl), sdk.fetchChainNowSeconds(rpcUrl)]);
+  if (!config.data.reservationsEnabled) return [];
+  const contracts = listed.filter(({ data }) => !data.toClose && !data.reservationsDisabled);
+  const rows: BonusMarketFleet[] = [];
+  const fleetNames = new Map<string, string>();
+  for (let offset = 0; offset < contracts.length; offset += BATCH_SIZE) {
+    const batch = contracts.slice(offset, offset + BATCH_SIZE);
+    const unknownFleets = [...new Set(batch.map(({ data }) => data.fleet))].filter(fleet => !fleetNames.has(fleet));
+    const [snapshots, fleets] = await Promise.all([
+      readBonusSnapshots(rpc, batch, config, nowSeconds, receivedAtMs),
+      unknownFleets.length ? fetchEncodedAccounts(rpc, unknownFleets, { commitment: 'finalized' }) : [],
+    ]);
+    for (const fleet of fleets) {
+      let name: string = fleet.address;
+      if (fleet.exists && fleet.programAddress === MAINNET_SAGE_PROGRAM) {
+        const bytes = Buffer.from(fleet.data);
+        if (bytes.subarray(0, 8).equals(FLEET_DISCRIMINATOR)) {
+          try {
+            const { fleetLabel } = getFleetDecoder().decode(bytes.subarray(8));
+            name = Buffer.from(fleetLabel).toString('utf8').replace(/\0/g, '').trim() || name;
+          } catch { /* Keep the fleet address when its label cannot be decoded. */ }
+        }
+      }
+      fleetNames.set(fleet.address, name);
+    }
+    for (const contract of batch) {
+      const snapshot = snapshots.get(contract.address)?.snapshot;
+      const rate = snapshot?.rentalRateAtlasPerDay
+        ?? Number(sdk.rateAfterStaleDecay(contract.data, config.data, nowSeconds)) / Number(config.data.stardustToAtlas || 100_000_000n);
+      const endsAtMs = snapshot?.activeRentalEndsAtMs ?? null;
+      const bidAtlas = snapshot?.currentMinimumBidAtlas;
+      rows.push({
+        contractAddress: contract.address, fleetName: fleetNames.get(contract.data.fleet) ?? contract.data.fleet,
+        rate, minimumSeconds: Number(contract.data.durationMinSeconds), endsAtMs,
+        bidAtlas: endsAtMs != null && endsAtMs > nowSeconds * 1_000 && bidAtlas != null ? Math.max(rate, bidAtlas) : null,
+        stateKnown: Boolean(snapshot),
+      });
+    }
+  }
+  return rows;
 }
 
 export function ourBonusDefender(raw: ContractSnapshot, settings: Pick<AppSettings, 'playerProfile' | 'walletAddress'>): boolean {
@@ -118,7 +203,7 @@ function chainNow(fleet: BonusFleet): number {
 type BonusAttemptResult = { status: 'waiting' | 'warning' | 'pending' | 'submitted'; detail: string };
 
 export async function executeBonusBid(
-  entry: FleetWatchEntry, rule: BonusRule, fleet: BonusFleet, settings: RuntimeSettings,
+  entry: BonusEntry, rule: BonusRule, fleet: BonusFleet, settings: RuntimeSettings,
   dataDirectory: string, historyFile: string, stillEnabled: () => Promise<boolean>,
 ): Promise<BonusAttemptResult> {
   const waiting = (detail: string): BonusAttemptResult => ({ status: 'waiting', detail });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import type { ContractSnapshot } from '@sly-rentals/core';
 import { clearPendingBonusBid, loadBonusSettings, readPendingBonusBid, saveBonusSettings, savePendingBonusBid } from '../src/bonus-store.js';
-import { BONUS_OVERBID_MIN_REMAINING_MS, ourBonusDefender, planBonusReservation } from '../src/bonus-strategy.js';
+import { BONUS_OVERBID_MIN_REMAINING_MS, ourBonusDefender, planBonusReservation, selectBonusEntries } from '../src/bonus-strategy.js';
 import type { FleetContractSnapshot, FleetWatchEntry } from '../src/model.js';
 
 const contractAddress = 'FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7';
@@ -85,7 +85,7 @@ test('FCFS starts disabled and rules are isolated by Player Profile', async () =
   const directory = await mkdtemp(path.join(tmpdir(), 'fleet-bonus-test-'));
   try {
     assert.deepEqual(await loadBonusSettings(directory, profile), { minimumRateAtlasPerDay: 3_000, rules: [] });
-    const settings = { minimumRateAtlasPerDay: 3_200, rules: [rule] };
+    const settings = { minimumRateAtlasPerDay: 3_200, rules: [{ ...rule, market: true as const }] };
     await saveBonusSettings(directory, profile, settings);
     assert.deepEqual(await loadBonusSettings(directory, profile), settings);
     assert.deepEqual(await loadBonusSettings(directory, wallet), { minimumRateAtlasPerDay: 3_000, rules: [] });
@@ -99,4 +99,14 @@ test('FCFS starts disabled and rules are isolated by Player Profile', async () =
     await clearPendingBonusBid(directory, wallet, contractAddress);
     assert.equal(await readPendingBonusBid(directory, wallet, contractAddress), undefined);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('market opt-in arms a fleet outside the watchlist and preserves prior watchlist guards', () => {
+  assert.deepEqual(selectBonusEntries([rule], []), []);
+  const authorized = { ...rule, market: true as const };
+  assert.deepEqual(selectBonusEntries([authorized], []).map(item => item.entry.contractAddress), [contractAddress]);
+  assert.deepEqual(selectBonusEntries([{ ...authorized, fcfs: false }], []), []);
+  assert.deepEqual(selectBonusEntries([authorized], [{ ...entry, canSafelyOperate: false }]), []);
+  assert.deepEqual(selectBonusEntries([authorized], [{ ...entry, enabled: false }]), []);
+  assert.deepEqual(selectBonusEntries([rule], [entry]), [{ entry, rule }]);
 });

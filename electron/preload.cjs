@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   loadRentalHistory: (refresh = false) => ipcRenderer.invoke('history:load', refresh),
   loadAtlasEarnings: (refresh = false) => ipcRenderer.invoke('earnings:load', refresh),
   loadBonusStrategy: () => ipcRenderer.invoke('bonus:load'),
+  loadBonusMarket: (refresh = false) => ipcRenderer.invoke('bonus:market', refresh),
   saveBonusStrategy: (profile, configuration) => ipcRenderer.invoke('bonus:save', profile, configuration),
   onBonusStatus: (listener) => ipcRenderer.on('bonus:status', (_event, status) => listener(status)),
   getBootstrap: () => ipcRenderer.invoke('app:get-bootstrap'),

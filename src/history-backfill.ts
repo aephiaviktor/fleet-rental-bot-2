@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {NEXT_GEN_SRSLY_PROGRAM_ID} from './model.js';
 import {readRentalHistory, type RentalHistoryRow} from './rental-history.js';
 import {rentalSdk} from './rental-sdk.js';
+import {earningsEvidence, type EarningsEvidence} from './atlas-earnings.js';
 const require=createRequire(import.meta.url);
 const audit=require('@sly-rentals/core/audit') as typeof import('@sly-rentals/core/audit');
 const core=require('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
@@ -52,6 +53,12 @@ export function applyClosedRental(rows:RentalHistoryRow[],event:any,at:number,si
  if(!row || row.end>at)return false; // Cannot safely assign early-cancellation rewards without the cancellation event.
  row.pointsEarned=Number(event.pointsAwarded)/1e8;row.pointsSignature=signature;return true;
 }
+async function historyRpc(rpcUrl:string,method:string,params:unknown[]){
+  const response=await fetch(rpcUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
+  if(!response.ok)throw new Error(`History RPC HTTP ${response.status}`);
+  const result=await response.json() as any;if(result.error)throw new Error(result.error.message);return result.result;
+}
+
 export async function backfillRentals(file:string,profile:string,wallets:string[],rpcUrl:string):Promise<void>{
  readRentalHistory(file,profile); // Initialize the per-instance database.
  const db=new DatabaseSync(file);
@@ -60,11 +67,7 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
  db.exec('CREATE TABLE IF NOT EXISTS history_intents(profile TEXT,signature TEXT,payload TEXT,PRIMARY KEY(profile,signature))');
  db.exec('CREATE TABLE IF NOT EXISTS history_cursor(profile TEXT, wallet TEXT, signature TEXT, PRIMARY KEY(profile,wallet))');
  const sdk=rentalSdk();
- async function rpc(method:string,params:unknown[]){
-  const response=await fetch(rpcUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
-  if(!response.ok)throw new Error(`History RPC HTTP ${response.status}`);
-  const result=await response.json() as any;if(result.error)throw new Error(result.error.message);return result.result;
- }
+ const rpc = (method:string,params:unknown[]) => historyRpc(rpcUrl,method,params);
  try{
  const targets=new Map<string,string>();
  for(const wallet of new Set(wallets))targets.set(wallet,await sdk.deriveBorrowerState(wallet,NEXT_GEN_SRSLY_PROGRAM_ID));
@@ -115,11 +118,13 @@ export async function backfillRentals(file:string,profile:string,wallets:string[
  }}finally{db.close();}
 }
 
-export interface HistoryEvidence {event:any;slot:number;index:number;at:number;signature:string;keys:string[];}
+export interface HistoryEvidence extends EarningsEvidence {event:any;slot:number;index:number;at:number;signature:string;keys:string[];}
 export function historyEvidence(tx:any,signature:string):HistoryEvidence[]{
  if(tx?.meta?.err!==null || !Number.isSafeInteger(tx.blockTime))return [];
  const keys=[...(tx.transaction?.message?.accountKeys||[]),...(tx.meta.loadedAddresses?.writable||[]),...(tx.meta.loadedAddresses?.readonly||[])].map(x=>typeof x==='string'?x:x.pubkey);
- return audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),signature).map((event,index)=>({event,slot:Number(tx.slot||0),index,at:tx.blockTime*1000,signature,keys}));
+ const events=audit.parseAnchorEvents(tx.meta.logMessages||[],NEXT_GEN_SRSLY_PROGRAM_ID,BigInt(tx.slot||0),signature);
+ const earnings=earningsEvidence(tx,keys,events);
+ return events.map((event,index)=>({event,slot:Number(tx.slot||0),index,at:tx.blockTime*1000,signature,keys,...earnings[index]}));
 }
 /** Replay queue lifecycle, require the promoted queue account in the acceptance transaction.
  * A borrower/contract match alone is not enough: displaced/consumed reservations are removed.
@@ -150,4 +155,65 @@ export function applyBidEvidence(rows:RentalHistoryRow[],events:HistoryEvidence[
   // An acceptance consumes the pending queue for this contract, even for another borrower.
   for(const [id,p] of pending)if(p.event.contract===e.contract)pending.delete(id);
  }
+}
+
+const missingEarningsEvidence = new Map<string, number>();
+const EARNINGS_PROOF_BATCH = 24;
+
+/** Upgrade only relevant saved events. Preserve the regular rental-history cursors. */
+export async function backfillEarningsEvidence(file: string, profile: string, wallets: string[], rpcUrl: string): Promise<void> {
+  readRentalHistory(file, profile);
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('PRAGMA busy_timeout=5000');
+    const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='history_evidence'").get();
+    if (!exists) return;
+    const stored = db.prepare('SELECT payload FROM history_evidence WHERE profile=?').all(profile)
+      .map(row => JSON.parse(String(row.payload)) as HistoryEvidence);
+    // Recover old delegates when a saved placement itself identifies this profile.
+    const owned = new Set(wallets);
+    for (const e of stored) {
+      if (e.event.type === 'ReservationPlaced' && (e.reservationProfile === profile || (e.reservationProfile === undefined && e.keys.includes(profile)))) {
+        owned.add(e.event.borrower);
+      }
+    }
+    const toInspect = new Set(stored.filter(e => e.event.type === 'ReservationKnockedOff' && owned.has(e.event.displacedBorrower))
+      .map(e => `${e.event.contract}:${e.event.displacedBorrower}`));
+    for (const [signature, until] of missingEarningsEvidence) {
+      if (until <= Date.now()) missingEarningsEvidence.delete(signature);
+    }
+    const signatures = new Set<string>();
+    for (const e of stored) {
+      if (e.event.type === 'ReservationKnockedOff' && e.bonusAtlasUnits === undefined
+        && owned.has(e.event.displacedBorrower) && String(e.event.bonus) !== '0') signatures.add(e.signature);
+      if (e.event.type === 'ReservationPlaced' && e.reservationProfile === undefined
+        && toInspect.has(`${e.event.contract}:${e.event.borrower}`)) signatures.add(e.signature);
+    }
+    const update = db.prepare('UPDATE history_evidence SET payload=? WHERE profile=? AND signature=? AND idx=?');
+    const pending = [...signatures].filter(signature => !missingEarningsEvidence.has(signature)).slice(0, EARNINGS_PROOF_BATCH);
+    for (const signature of pending) {
+      let tx: any;
+      try { tx = await historyRpc(rpcUrl, 'getTransaction', [signature, { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 }]); }
+      catch { return; } // Retry on the next refresh if the provider is unavailable.
+      const verified = historyEvidence(tx, signature);
+      if (!verified.length) {
+        missingEarningsEvidence.set(signature, Date.now() + 5 * 60_000);
+        continue;
+      }
+      // Match event identity before adding proofs to evidence decoded by an earlier SDK.
+      const older = stored.filter(item => item.signature === signature);
+      for (const item of older) {
+        const matches = verified.filter(e => e.event.type === item.event.type && e.event.contract === item.event.contract
+          && e.event.rentalState === item.event.rentalState && e.event.borrower === item.event.borrower
+          && e.event.displacedBorrower === item.event.displacedBorrower && e.event.newBorrower === item.event.newBorrower
+          && String(e.event.bonus) === String(item.event.bonus) && String(e.event.refund) === String(item.event.refund)
+          && String(e.event.bidAtlas) === String(item.event.bidAtlas) && String(e.event.bidPoints) === String(item.event.bidPoints)
+          && String(e.event.escrow) === String(item.event.escrow));
+        if (matches.length !== 1) continue;
+        const { bonusAtlasUnits, reservationProfile } = matches[0];
+        update.run(JSON.stringify({ ...item, ...{ bonusAtlasUnits, reservationProfile } }), profile, signature, item.index);
+      }
+      missingEarningsEvidence.set(signature, Date.now() + 5 * 60_000);
+    }
+  } finally { db.close(); }
 }

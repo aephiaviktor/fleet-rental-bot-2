@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('fleetRentalBot', {
   openHistoryTransaction: (signature) => ipcRenderer.invoke('history:open-transaction', signature),
   openHistoryAccount: (address) => ipcRenderer.invoke('history:open-account', address),
   loadRentalHistory: (refresh = false) => ipcRenderer.invoke('history:load', refresh),
+  loadAtlasEarnings: (refresh = false) => ipcRenderer.invoke('earnings:load', refresh),
   getBootstrap: () => ipcRenderer.invoke('app:get-bootstrap'),
   getAephiaAccessStatus: () => ipcRenderer.invoke('access:status'),
   verifyAephiaApiKey: (apiKey) => ipcRenderer.invoke('access:unlock', apiKey),

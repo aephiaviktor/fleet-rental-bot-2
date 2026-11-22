@@ -638,20 +638,40 @@ ipcMain.handle('history:open-account', async (_event, value) => {
 
 const historyRefreshes = new Map();
 const historyFleetNames = new Map();
+const earningsRefreshes = new Map();
+function historyDatabasePath() {
+  return path.join(app.getPath('userData'), 'rental-history.sqlite');
+}
+async function refreshStoredRentalHistory(settings, wallets) {
+  const file = historyDatabasePath();
+  const key = `${settings.playerProfile}:${settings.rpcUrl}`;
+  if (!historyRefreshes.has(key)) {
+    const refresh = (async () => {
+      const { discoverRentals, recordRentals } = await domainModule('rental-history');
+      const rows = await discoverRentals(settings.playerProfile, settings.rpcUrl);
+      recordRentals(file, settings.playerProfile, rows);
+      if (!wallets.length) throw new Error('Profile wallets unavailable; backfill deferred');
+      const { backfillRentals } = await domainModule('history-backfill');
+      await backfillRentals(file, settings.playerProfile, wallets, settings.rpcUrl);
+    })().finally(() => { historyRefreshes.delete(key); });
+    historyRefreshes.set(key, refresh);
+  }
+  await historyRefreshes.get(key);
+}
 ipcMain.handle('history:load', async (_event, refresh = false) => {
   await requireAephiaAccess();
   const settings = await loadRuntimeSettings();
-  const { discoverRentals, recordRentals, readRentalHistory } = await domainModule('rental-history');
-  const file = path.join(app.getPath('userData'), 'rental-history.sqlite');
+  const { readRentalHistory } = await domainModule('rental-history');
+  const file = historyDatabasePath();
   let error = null;
-  let roles={addresses:[],main:null};
-  if(settings.playerProfile){try{roles=await (await domainModule('player-profile')).resolveHistoryWallets(settings.playerProfile,settings.rpcUrl);}catch(e){error=e.message;}}
+  let roles = { addresses: [], main: null };
+  if (settings.playerProfile) {
+    try { roles = await (await domainModule('player-profile')).resolveHistoryWallets(settings.playerProfile, settings.rpcUrl); }
+    catch (e) { error = e.message; }
+  }
   if (refresh && settings.playerProfile) {
-    const key = `${settings.playerProfile}:${settings.rpcUrl}`;
-    if (!historyRefreshes.has(key)) historyRefreshes.set(key, discoverRentals(settings.playerProfile, settings.rpcUrl)
-      .then(async rows => {recordRentals(file, settings.playerProfile, rows);if(!roles.addresses.length)throw new Error('Profile wallets unavailable; backfill deferred');await (await domainModule('history-backfill')).backfillRentals(file,settings.playerProfile,roles.addresses,settings.rpcUrl);})
-      .finally(() => { historyRefreshes.delete(key); }));
-    try { await historyRefreshes.get(key); } catch (e) { error = e.message; }
+    try { await refreshStoredRentalHistory(settings, roles.addresses); }
+    catch (e) { error = e.message; }
   }
   const { loadCachedRows } = await domainModule('fleet-database');
   const names = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance)
@@ -673,6 +693,52 @@ ipcMain.handle('history:load', async (_event, refresh = false) => {
     fleetName: names.get(row.contract) || row.contract,
     walletLabel: row.borrower === settings.walletAddress ? 'Bot' : row.borrower===roles.main ? 'Main' : 'Other',
   })), error, configured: Boolean(settings.playerProfile) };
+});
+
+ipcMain.handle('earnings:load', async (_event, refresh = false) => {
+  await requireAephiaAccess();
+  const settings = await loadRuntimeSettings();
+  const file = historyDatabasePath();
+  const [{ readAtlasEarnings, recordEarningsWalletScope }, { loadCachedRows }] = await Promise.all([
+    domainModule('atlas-earnings'), domainModule('fleet-database'),
+  ]);
+  let error = false;
+  if (refresh && settings.playerProfile) {
+    const key = `${settings.playerProfile}:${settings.rpcUrl}`;
+    if (!earningsRefreshes.has(key)) {
+      const task = (async () => {
+        const roles = await (await domainModule('player-profile')).resolveHistoryWallets(settings.playerProfile, settings.rpcUrl);
+        recordEarningsWalletScope(file, settings.playerProfile, roles.addresses);
+        let failed = false;
+        const scannedWallets = [...new Set([...roles.addresses, settings.walletAddress].filter(Boolean))];
+        try { await refreshStoredRentalHistory(settings, scannedWallets); } catch { failed = true; }
+        const { backfillEarningsEvidence } = await domainModule('history-backfill');
+        await backfillEarningsEvidence(file, settings.playerProfile, roles.addresses, settings.rpcUrl);
+        return failed;
+      })().finally(() => { earningsRefreshes.delete(key); });
+      earningsRefreshes.set(key, task);
+    }
+    try { error = await earningsRefreshes.get(key); } catch { error = true; }
+  }
+  const report = readAtlasEarnings(file, settings.playerProfile);
+  const names = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance).flatMap(({ row }) =>
+    row.snapshot.fleetName ? [[row.entry.contractAddress, row.snapshot.fleetName]] : []));
+  if (refresh && !error) {
+    const unknown = [...new Set(report.rows.map(row => row.contract))]
+      .filter(contract => !names.has(contract) && !historyFleetNames.has(contract)).slice(0, 8);
+    const { rentalSdk } = await domainModule('rental-sdk');
+    const sdk = rentalSdk();
+    await Promise.allSettled(unknown.map(async contract => {
+      const account = await sdk.fetchContract(contract, settings.rpcUrl);
+      const fleet = await sdk.fetchFleet(account.data.fleet, settings.rpcUrl);
+      const name = Buffer.from(fleet.fleetLabel).toString('utf8').replace(/\0/g, '').trim();
+      if (name) historyFleetNames.set(contract, name);
+    }));
+  }
+  return {
+    ...report, configured: Boolean(settings.playerProfile), error,
+    rows: report.rows.map(row => ({ ...row, fleetName: names.get(row.contract) || historyFleetNames.get(row.contract) || null })),
+  };
 });
 
 ipcMain.handle('funding:refresh', async () => {

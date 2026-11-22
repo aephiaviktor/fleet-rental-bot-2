@@ -87,32 +87,142 @@ function showAephiaGate(state={status:'missing',message:'First, enter your Aephi
 function hideAephiaGate(){const gate=$('aephia-access-gate'),shell=$('app-shell');gate.hidden=true;shell.inert=false;shell.setAttribute('aria-hidden','false')}
 async function bootUnlocked(b){if(S.unlocked){hideAephiaGate();return}const[w,s,cached]=await Promise.all([window.fleetRentalBot.loadWatchlist(),window.fleetRentalBot.loadSettings(),window.fleetRentalBot.loadCachedWatchlist()]);S.document=w.document;S.columns=w.columns;S.settings=s;S.live=new Map(cached.map(x=>[x.id,x]));S.appVersion=b.version;S.unlocked=true;hideAephiaGate();$('version').textContent=`v${b.version}`;$('mode').textContent=s.useHeliusSender?'LCFS READY':'MONITORING';$('settings-api-key').value='';$('settings-api-key').placeholder=s.secureSettingsStatus?.aephiaApiKey?'Stored securely — enter a new value to replace':'Enter Aephia API key';$('aephia-key-status').textContent='Valid and stored securely';$('settings-hot-wallet-secret').value='';$('settings-hot-wallet-secret').placeholder=s.secureSettingsStatus?.hotWalletSecret?'Stored securely — enter a new value to replace':'Enter hot wallet secret';$('hot-wallet-secret-status').textContent=s.secureSettingsStatus?.hotWalletSecret?'Stored securely':'No wallet stored';$('remove-hot-wallet').disabled=!s.secureSettingsStatus?.hotWalletSecret;$('settings-profile').value=s.playerProfile||'';$('settings-rpc').value=s.rpcUrl;$('settings-warm-up-addresses').value=(s.warmUpAddresses||[]).join(', ');$('settings-rpc-rate').value=s.rpcRequestsPerSecond;$('settings-use-helius-sender').checked=Boolean(s.useHeliusSender);$('settings-transaction-priority-fee').value=s.transactionPriorityFeeMicroLamports;$('settings-helius-sender-tip').value=s.heliusSenderTipSol;$('settings-lcfs-lead-time').value=s.lcfsLeadTimeSeconds;applySensitiveVisibility();renderHotWalletAddress();void loadLimiterStatus();void loadPlayerFaction();columns();render();void refreshLcfsOutcomes();scheduleCountdownRender();void refreshFunding();void scheduleHistoryRefresh();void checkForUpdates();if(S.document.entries.length)void refresh().catch(e=>{$('save-state').textContent=e.message||'Refresh unavailable';void scheduleCachedRefreshes()});else void scheduleCachedRefreshes()}
 async function boot(){const b=await window.fleetRentalBot.getBootstrap();S.appVersion=b.version;$('version').textContent=`v${b.version}`;showAephiaGate({status:'checking',message:'Checking stored Aephia access…'});const access=await window.fleetRentalBot.getAephiaAccessStatus();if(access.status==='valid')await bootUnlocked(b);else showAephiaGate(access)}
-$('aephia-unlock-form').onsubmit=async event=>{event.preventDefault();const key=$('aephia-unlock-key').value.trim();showAephiaGate({status:'checking',message:'Verifying Aephia API key…'});try{const access=await window.fleetRentalBot.verifyAephiaApiKey(key);if(access.status==='valid'){$('aephia-unlock-key').value='';await bootUnlocked(await window.fleetRentalBot.getBootstrap())}else showAephiaGate(access)}catch(error){showAephiaGate({status:'temporary_error',message:error?.message||'Aephia verification failed. Retry.'})}};window.fleetRentalBot.onAephiaAccessStatus?.(access=>{if(access.status==='valid'&&S.unlocked)hideAephiaGate();else if(['missing','invalid','temporary_error'].includes(access.status))showAephiaGate(access)});$('hide-sensitive-data').onchange=e=>{S.rpcUrlHidden=e.target.checked;applySensitiveVisibility()};$('remove-hot-wallet').onclick=async()=>{if(!confirm('Remove the securely stored hot wallet from this instance?'))return;const result=await window.fleetRentalBot.removeHotWallet();S.settings={...S.settings,hotWalletAddress:'',secureSettingsStatus:{...S.settings.secureSettingsStatus,...result.secureSettingsStatus}};$('settings-hot-wallet-secret').value='';$('settings-hot-wallet-secret').placeholder='Enter hot wallet secret';$('hot-wallet-secret-status').textContent='No wallet stored';$('remove-hot-wallet').disabled=true;renderHotWalletAddress();applySensitiveVisibility()};$('add-rule-row-btn').onclick=addRow;$('sidebar-toggle').onclick=()=>{const collapsed=$('app-shell').classList.toggle('nav-collapsed');$('sidebar-toggle').textContent=collapsed?'>':'<';$('sidebar-toggle').setAttribute('aria-label',collapsed?'Expand sidebar':'Collapse sidebar')};$('open-settings').onclick=async()=>{setDrawer(true);await loadLimiterStatus()};$('close-settings').onclick=()=>setDrawer(false);$('settings-overlay').onclick=e=>{if(e.target===$('settings-overlay'))setDrawer(false)};$('open-rpc-usage').onclick=()=>{$('rpc-usage-modal').hidden=false;void loadRpcUsage()};$('close-rpc-usage').onclick=()=>$('rpc-usage-modal').hidden=true;$('rpc-usage-modal').onclick=e=>{if(e.target===$('rpc-usage-modal'))$('rpc-usage-modal').hidden=true};$('rpc-usage-date').onchange=()=>void loadRpcUsage($('rpc-usage-date').value);$('rpc-usage-instance').onchange=()=>{populateRpcMethods();renderRpcUsage()};$('rpc-usage-method').onchange=renderRpcUsage;$('settings-form').onsubmit=async ev=>{ev.preventDefault();$('settings-save-state').textContent='Saving…';S.settings={...S.settings,version:1,aephiaApiKey:$('settings-api-key').value.trim(),hotWalletSecret:$('settings-hot-wallet-secret').value.trim(),playerProfile:$('settings-profile').value.trim(),challengerProfileAddress:$('settings-profile').value.trim(),useRpcLimiter:false,rpcUrl:$('settings-rpc').value.trim(),warmUpAddresses:$('settings-warm-up-addresses').value,rpcRequestsPerSecond:Number($('settings-rpc-rate').value),refreshIntervalSeconds:60,useHeliusSender:$('settings-use-helius-sender').checked,transactionPriorityFeeMicroLamports:Number($('settings-transaction-priority-fee').value),heliusSenderTipSol:Number($('settings-helius-sender-tip').value),lcfsLeadTimeSeconds:Number($('settings-lcfs-lead-time').value)};try{const result=await window.fleetRentalBot.saveSettings(S.settings);S.settings={...S.settings,aephiaApiKey:'',hotWalletSecret:'',hotWalletAddress:result.hotWalletAddress,secureSettingsStatus:result.secureSettingsStatus};$('settings-hot-wallet-secret').value='';$('settings-hot-wallet-secret').placeholder=result.secureSettingsStatus?.hotWalletSecret?'Stored securely — enter a new value to replace':'Enter hot wallet secret';$('hot-wallet-secret-status').textContent=result.secureSettingsStatus?.hotWalletSecret?'Stored securely':'No wallet stored';$('remove-hot-wallet').disabled=!result.secureSettingsStatus?.hotWalletSecret;renderHotWalletAddress();applySensitiveVisibility();$('mode').textContent=S.settings.useHeliusSender?'LCFS READY':'MONITORING';$('settings-save-state').textContent='Saved';for(const timer of S.timers.values())clearTimeout(timer);S.timers.clear();setDrawer(false);await Promise.all([loadPlayerFaction(),refresh(),loadLimiterStatus()])}catch(e){$('settings-save-state').textContent=e.message||'Save failed'}};$('review-close').onclick=$('review-done').onclick=()=>$('review-dialog').close();$('simulate-button').onclick=simulate;$('update-btn').onclick=()=>void checkForUpdates(true);$('update-close-btn').onclick=$('update-cancel-btn').onclick=()=>setUpdateModal(false);$('update-modal').onclick=event=>{if(event.target===$('update-modal'))setUpdateModal(false)};$('update-confirm-btn').onclick=()=>void installUpdate();window.fleetRentalBot.onUpdateProgress?.(progress=>{if(progress?.message)$('update-message').textContent=progress.message});function renderLcfsOutcomes(){const note=$('lcfs-outcome-note');if(!note)return;const lines=RulesDisplay.lcfsOutcomeLines(S.document?.entries||[],S.lcfsAttempts||[],S.live,Date.now());note.textContent=lines.join('\n');note.hidden=lines.length===0}
+$('aephia-unlock-form').onsubmit=async event=>{event.preventDefault();const key=$('aephia-unlock-key').value.trim();showAephiaGate({status:'checking',message:'Verifying Aephia API key…'});try{const access=await window.fleetRentalBot.verifyAephiaApiKey(key);if(access.status==='valid'){$('aephia-unlock-key').value='';await bootUnlocked(await window.fleetRentalBot.getBootstrap())}else showAephiaGate(access)}catch(error){showAephiaGate({status:'temporary_error',message:error?.message||'Aephia verification failed. Retry.'})}};window.fleetRentalBot.onAephiaAccessStatus?.(access=>{if(access.status==='valid'&&S.unlocked)hideAephiaGate();else if(['missing','invalid','temporary_error'].includes(access.status))showAephiaGate(access)});$('hide-sensitive-data').onchange=e=>{S.rpcUrlHidden=e.target.checked;applySensitiveVisibility()};$('remove-hot-wallet').onclick=async()=>{if(!confirm('Remove the securely stored hot wallet from this instance?'))return;const result=await window.fleetRentalBot.removeHotWallet();S.settings={...S.settings,hotWalletAddress:'',secureSettingsStatus:{...S.settings.secureSettingsStatus,...result.secureSettingsStatus}};$('settings-hot-wallet-secret').value='';$('settings-hot-wallet-secret').placeholder='Enter hot wallet secret';$('hot-wallet-secret-status').textContent='No wallet stored';$('remove-hot-wallet').disabled=true;renderHotWalletAddress();applySensitiveVisibility()};$('add-rule-row-btn').onclick=addRow;$('sidebar-toggle').onclick=()=>{const collapsed=$('app-shell').classList.toggle('nav-collapsed');$('sidebar-toggle').textContent=collapsed?'>':'<';$('sidebar-toggle').setAttribute('aria-label',collapsed?'Expand sidebar':'Collapse sidebar')};$('open-settings').onclick=async()=>{setDrawer(true);await loadLimiterStatus()};$('close-settings').onclick=()=>setDrawer(false);$('settings-overlay').onclick=e=>{if(e.target===$('settings-overlay'))setDrawer(false)};$('open-rpc-usage').onclick=()=>{$('rpc-usage-modal').hidden=false;void loadRpcUsage()};$('close-rpc-usage').onclick=()=>$('rpc-usage-modal').hidden=true;$('rpc-usage-modal').onclick=e=>{if(e.target===$('rpc-usage-modal'))$('rpc-usage-modal').hidden=true};$('rpc-usage-date').onchange=()=>void loadRpcUsage($('rpc-usage-date').value);$('rpc-usage-instance').onchange=()=>{populateRpcMethods();renderRpcUsage()};$('rpc-usage-method').onchange=renderRpcUsage;$('settings-form').onsubmit=async ev=>{ev.preventDefault();$('settings-save-state').textContent='Saving…';S.settings={...S.settings,version:1,aephiaApiKey:$('settings-api-key').value.trim(),hotWalletSecret:$('settings-hot-wallet-secret').value.trim(),playerProfile:$('settings-profile').value.trim(),challengerProfileAddress:$('settings-profile').value.trim(),useRpcLimiter:false,rpcUrl:$('settings-rpc').value.trim(),warmUpAddresses:$('settings-warm-up-addresses').value,rpcRequestsPerSecond:Number($('settings-rpc-rate').value),refreshIntervalSeconds:60,useHeliusSender:$('settings-use-helius-sender').checked,transactionPriorityFeeMicroLamports:Number($('settings-transaction-priority-fee').value),heliusSenderTipSol:Number($('settings-helius-sender-tip').value),lcfsLeadTimeSeconds:Number($('settings-lcfs-lead-time').value)};try{const result=await window.fleetRentalBot.saveSettings(S.settings);S.settings={...S.settings,aephiaApiKey:'',hotWalletSecret:'',hotWalletAddress:result.hotWalletAddress,secureSettingsStatus:result.secureSettingsStatus};$('settings-hot-wallet-secret').value='';$('settings-hot-wallet-secret').placeholder=result.secureSettingsStatus?.hotWalletSecret?'Stored securely — enter a new value to replace':'Enter hot wallet secret';$('hot-wallet-secret-status').textContent=result.secureSettingsStatus?.hotWalletSecret?'Stored securely':'No wallet stored';$('remove-hot-wallet').disabled=!result.secureSettingsStatus?.hotWalletSecret;renderHotWalletAddress();applySensitiveVisibility();$('mode').textContent=S.settings.useHeliusSender?'LCFS READY':'MONITORING';$('settings-save-state').textContent='Saved';for(const timer of S.timers.values())clearTimeout(timer);S.timers.clear();setDrawer(false);if(!$('earnings-panel').hidden)void showAtlasEarnings(true,true);await Promise.all([loadPlayerFaction(),refresh(),loadLimiterStatus()])}catch(e){$('settings-save-state').textContent=e.message||'Save failed'}};$('review-close').onclick=$('review-done').onclick=()=>$('review-dialog').close();$('simulate-button').onclick=simulate;$('update-btn').onclick=()=>void checkForUpdates(true);$('update-close-btn').onclick=$('update-cancel-btn').onclick=()=>setUpdateModal(false);$('update-modal').onclick=event=>{if(event.target===$('update-modal'))setUpdateModal(false)};$('update-confirm-btn').onclick=()=>void installUpdate();window.fleetRentalBot.onUpdateProgress?.(progress=>{if(progress?.message)$('update-message').textContent=progress.message});function renderLcfsOutcomes(){const note=$('lcfs-outcome-note');if(!note)return;const lines=RulesDisplay.lcfsOutcomeLines(S.document?.entries||[],S.lcfsAttempts||[],S.live,Date.now());note.textContent=lines.join('\n');note.hidden=lines.length===0}
 async function refreshLcfsOutcomes(){try{S.lcfsAttempts=await window.fleetRentalBot.getLcfsState()}catch{S.lcfsAttempts=[]}renderLcfsOutcomes()}
 window.fleetRentalBot.onLcfsStatus?.(event=>{$('save-state').textContent=`LCFS ${event.status}: ${event.detail}`;void refreshLcfsOutcomes()});boot().catch(e=>{$('mode').textContent='STARTUP ERROR';$('mode').title=e.message});
 $('rental-rules-body').addEventListener('focusout',()=>setTimeout(()=>{if(S.renderPending)render()},0));
 
-let historyLoading=false;
-async function showRentalHistory(refresh=true,background=false){
-  if(!background){
-  $('reservations-panel').hidden=true;$('history-panel').hidden=false;$('open-history').classList.add('active');$('open-reservations').classList.remove('active');renderHistoryColumns();
-  }
-  if(historyLoading)return;historyLoading=true;$('refresh-history').disabled=true;
-  $('history-status').textContent='Loading confirmed rental history…';
-  try {
-    const result=await window.fleetRentalBot.loadRentalHistory(refresh);
-    S.historyRows=result.rows;renderHistory();
-    $('history-status').textContent=result.error?`Refresh failed; showing saved history. ${result.error}`:
-      !result.configured?'Configure a Player Profile in Settings.':result.rows.length?`${result.rows.length} recorded rentals · observed accounts + accepted transactions`:'No confirmed rentals found in available history.';
-  } catch(error){$('history-status').textContent=error.message||'History unavailable';}
-  finally{historyLoading=false;$('refresh-history').disabled=false;}
-}
-let activeNav=null;function toggleColumns(sectionId){const show=$(sectionId).hidden;$('reservation-columns').hidden=true;$('history-columns').hidden=true;$(sectionId).hidden=!show}
-$('open-history').onclick=()=>{const repeat=activeNav==='open-history';activeNav='open-history';void showRentalHistory();if(repeat)toggleColumns('history-columns');else{$('reservation-columns').hidden=true;$('history-columns').hidden=true}};
-$('refresh-history').onclick=()=>void showRentalHistory();
-$('open-reservations').onclick=()=>{const repeat=activeNav==='open-reservations';activeNav='open-reservations';$('history-panel').hidden=true;$('reservations-panel').hidden=false;$('open-history').classList.remove('active');$('open-reservations').classList.add('active');render();if(repeat)toggleColumns('reservation-columns');else{$('reservation-columns').hidden=true;$('history-columns').hidden=true}};
+const mainPanels = {
+  'open-reservations': 'reservations-panel',
+  'open-history': 'history-panel',
+  'open-earnings': 'earnings-panel',
+};
+let activeNav = null;
+let historyLoading = false;
+let earningsLoading = false;
 
-async function scheduleHistoryRefresh(){await showRentalHistory(true,true);setTimeout(()=>void scheduleHistoryRefresh(),300000);}
+function selectMainPanel(buttonId) {
+  const repeat = activeNav === buttonId;
+  activeNav = buttonId;
+  for (const [id, panel] of Object.entries(mainPanels)) {
+    const selected = id === buttonId;
+    $(id).classList.toggle('active', selected);
+    $(panel).hidden = !selected;
+  }
+  const repeatColumns = repeat && (buttonId === 'open-history' ? 'history-columns'
+    : buttonId === 'open-reservations' ? 'reservation-columns' : null);
+  for (const section of ['reservation-columns', 'history-columns']) {
+    $(section).hidden = section === repeatColumns ? !$(section).hidden : true;
+  }
+}
+
+async function showRentalHistory(refresh = true) {
+  if (historyLoading) return;
+  historyLoading = true;
+  $('refresh-history').disabled = true;
+  $('history-status').textContent = 'Loading confirmed rental history…';
+  try {
+    const result = await window.fleetRentalBot.loadRentalHistory(refresh);
+    S.historyRows = result.rows;
+    renderHistory();
+    $('history-status').textContent = result.error ? `Refresh failed; showing saved history. ${result.error}`
+      : !result.configured ? 'Configure a Player Profile in Settings.'
+      : result.rows.length ? `${result.rows.length} recorded rentals · observed accounts + accepted transactions`
+      : 'No confirmed rentals found in available history.';
+  } catch (error) { $('history-status').textContent = error.message || 'History unavailable'; }
+  finally { historyLoading = false; $('refresh-history').disabled = false; }
+}
+
+function heldTime(ms) {
+  if (ms == null) return '—';
+  let remaining = Math.floor(ms / 1000);
+  const parts = [];
+  for (const [seconds, unit] of [[86400, 'd'], [3600, 'h'], [60, 'm'], [1, 's']]) {
+    const count = Math.floor(remaining / seconds);
+    if (count) parts.push(`${count}${unit}`);
+    remaining %= seconds;
+  }
+  return parts.slice(0, 2).join(' ') || '0s';
+}
+
+function renderAtlasEarnings(report) {
+  const percent = value => value == null ? '—' : `${n(value)}%`;
+  $('earnings-total').textContent = report.totalBonusAtlas == null ? '—' : `${n(report.totalBonusAtlas, 8)} ATLAS`;
+  $('earnings-apr').textContent = percent(report.aprPct);
+  const body = $('earnings-body');
+  body.replaceChildren();
+  for (const row of report.rows) {
+    const tr = el('tr', null, 'earnings-row');
+    const fleet = el('td');
+    const name = row.fleetName || `${row.contract.slice(0, 6)}…${row.contract.slice(-4)}`;
+    const link = el('button', name, 'earnings-transaction');
+    link.type = 'button';
+    link.title = `${row.contract} · Open outbid transaction`;
+    link.setAttribute('aria-label', `Open outbid transaction for ${name}`);
+    const open = () => window.fleetRentalBot.openHistoryTransaction(row.signature)
+      .catch(() => { $('earnings-status').textContent = 'Could not open the transaction.'; });
+    link.onclick = open;
+    tr.onclick = event => { if (event.target !== link) void open(); };
+    fleet.append(link);
+    const outbid = el('td', RulesDisplay.utc(row.outbidAtMs).replace(/ UTC$/, ''));
+    const held = el('td', heldTime(row.heldMs));
+    if (row.heldMs == null) held.title = 'The original reservation time could not be matched.';
+    const locked = el('td', n(row.atlasLocked, 8));
+    locked.title = 'Rent escrow plus ATLAS bid principal. Any Points bid is kept separate.';
+    const bonus = el('td', n(row.bonusAtlas, 8));
+    bonus.title = row.bonusAtlas == null ? 'An ATLAS bonus could not be verified from this transaction.' : 'Confirmed bonus in ATLAS.';
+    const apr = el('td', percent(row.aprPct));
+    if (row.aprPct == null) apr.title = 'APR requires a verified ATLAS bonus, locked capital, and a positive holding time.';
+    if (row.walletOnly) fleet.title = 'Attributed through a resolved wallet for this profile.';
+    tr.append(fleet, outbid, held, locked, bonus, apr);
+    body.append(tr);
+  }
+  const counts = `${report.rows.length} outbid · ${report.verifiedCount} verified bonuses · ${report.aprCount} with APR`;
+  $('earnings-status').textContent = !report.configured ? 'Configure a Player Profile in Settings.'
+    : report.error ? `Refresh incomplete. Showing saved evidence. ${counts}.`
+    : report.rows.length ? counts : 'No confirmed outbid reservations found in available history.';
+}
+
+async function showAtlasEarnings(refresh = true, showSavedFirst = false) {
+  if (earningsLoading) return;
+  earningsLoading = true;
+  const profile = S.settings?.playerProfile;
+  $('refresh-earnings').disabled = true;
+  try {
+    if (showSavedFirst) {
+      const saved = await window.fleetRentalBot.loadAtlasEarnings(false);
+      if (S.settings?.playerProfile !== profile) return;
+      renderAtlasEarnings(saved);
+    }
+    if (refresh) {
+      $('earnings-status').textContent = 'Refreshing earnings from available chain history…';
+      const report = await window.fleetRentalBot.loadAtlasEarnings(true);
+      if (S.settings?.playerProfile === profile) renderAtlasEarnings(report);
+    }
+  } catch (error) {
+    $('earnings-status').textContent = 'Earnings are unavailable.';
+  } finally {
+    earningsLoading = false;
+    $('refresh-earnings').disabled = false;
+    if (S.settings?.playerProfile !== profile && !$('earnings-panel').hidden) void showAtlasEarnings(true, true);
+  }
+}
+
+$('open-history').onclick = () => {
+  selectMainPanel('open-history');
+  renderHistoryColumns();
+  void showRentalHistory();
+};
+$('refresh-history').onclick = () => void showRentalHistory();
+$('open-reservations').onclick = () => { selectMainPanel('open-reservations'); render(); };
+$('open-earnings').onclick = () => { selectMainPanel('open-earnings'); void showAtlasEarnings(true, true); };
+$('refresh-earnings').onclick = () => void showAtlasEarnings();
+
+async function scheduleHistoryRefresh() {
+  if ($('earnings-panel').hidden) await showRentalHistory();
+  else await showAtlasEarnings();
+  setTimeout(() => void scheduleHistoryRefresh(), 300000);
+}
 
 const historyColumnDefinitions=[['fleetName','Fleet / Contract'],['start','Started (UTC)'],['end','Ends (UTC)'],['status','Status'],['walletLabel','Rented by'],['allIn','All-in/d (ATLAS)'],['rentTotal','Rent total (ATLAS)'],['bid','Winning bid'],['currency','Currency'],['points','Points'],['signature','Transaction'],['pointsSignature','Reward transaction']];
 function historyColumns(){let stored;try{stored=JSON.parse(localStorage.getItem('rental-history-columns'));}catch{}return Array.isArray(stored)?historyColumnDefinitions.filter(([id])=>stored.includes(id)||(id==='allIn'&&stored.includes('rate'))):historyColumnDefinitions.filter(([id])=>id!=='rentTotal');}

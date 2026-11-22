@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 test('Electron shell keeps renderer sandboxed and limits automated signing to LCFS', async () => {
   const main = await readFile('electron/main.cjs', 'utf8');
@@ -150,27 +151,30 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(main, /clearLcfsTimers/);
 });
 
-test('repeated nav clicks toggle the sidebar column picker', async () => {
-  const [html, renderer] = await Promise.all([
-    readFile('ui/index.html', 'utf8'),
-    readFile('ui/app.js', 'utf8'),
-  ]);
-  // Click 1 selects the menu and loads the main table: both pickers start hidden.
+test('repeat clicks toggle each column picker and ATLAS Earned closes both pickers', async () => {
+  const [html, renderer] = await Promise.all([readFile('ui/index.html', 'utf8'), readFile('ui/app.js', 'utf8')]);
   assert.match(html, /id="reservation-columns" class="nav-columns"[^>]*hidden/);
   assert.match(html, /id="history-columns" class="nav-columns" hidden/);
-  // Click 2 shows, click 3 hides: one toggle used by both nav entries.
-  assert.match(renderer, /function toggleColumns/);
-  assert.match(renderer, /toggleColumns\('reservation-columns'\)/);
-  assert.match(renderer, /toggleColumns\('history-columns'\)/);
-  const reservationsHandler = renderer.slice(
-    renderer.indexOf("$('open-reservations').onclick"),
-    renderer.indexOf('async function scheduleHistoryRefresh'),
-  );
-  // Do not reset the picker before a repeat click: click 2 must show and click 3 must hide.
-  assert.match(
-    reservationsHandler,
-    /render\(\);if\(repeat\)toggleColumns\('reservation-columns'\);else\{\$\('reservation-columns'\)\.hidden=true;\$\('history-columns'\)\.hidden=true\}/,
-  );
+  assert.match(html, /id="earnings-panel"[^>]* hidden/);
+  const ids = ['open-reservations', 'open-history', 'open-earnings', 'reservations-panel', 'history-panel', 'earnings-panel', 'reservation-columns', 'history-columns'];
+  const elements = new Map(ids.map(id => [id, { hidden: true, classList: { toggle() {} } }]));
+  const source = renderer.slice(renderer.indexOf('const mainPanels ='), renderer.indexOf('async function showRentalHistory'));
+  const select = runInNewContext(`${source}\nselectMainPanel;`, { $: (id: string) => elements.get(id) });
+  select('open-reservations');
+  assert.equal(elements.get('reservations-panel')!.hidden, false);
+  assert.equal(elements.get('reservation-columns')!.hidden, true);
+  select('open-reservations');
+  assert.equal(elements.get('reservation-columns')!.hidden, false);
+  select('open-reservations');
+  assert.equal(elements.get('reservation-columns')!.hidden, true);
+  select('open-history');
+  select('open-history');
+  assert.equal(elements.get('history-columns')!.hidden, false);
+  select('open-earnings');
+  assert.equal(elements.get('earnings-panel')!.hidden, false);
+  for (const id of ['reservation-columns', 'history-columns', 'history-panel', 'reservations-panel']) {
+    assert.equal(elements.get(id)!.hidden, true);
+  }
 });
 
 test('reservations panel reports only recent completed LCFS outcomes', async () => {

@@ -25,3 +25,43 @@
 .lcfs-outcome-note{margin:0;padding:.85rem 1rem;border-top:1px solid var(--border);color:var(--muted);white-space:pre-line}
 
 .funding-ready{color:#24c9a1;font-weight:600}.funding-short,.check-error{color:#ff7373;font-weight:700}.funding-unknown,.funding-bid-limit,.funding-rate-limit{color:#e5b95c}
+
+
+.earnings-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  padding: 0 1rem;
+}
+.earnings-summary > div {
+  flex: 1 1 180px;
+  padding: .75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft);
+}
+.earnings-summary dt, .earnings-note { color: var(--muted); }
+.earnings-summary dd {
+  margin: .25rem 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.earnings-note { padding: .75rem 1rem; margin: 0; font-size: 12px; }
+.earnings-table td { white-space: nowrap; vertical-align: middle; font-variant-numeric: tabular-nums; }
+.earnings-table th:nth-child(n+4), .earnings-table td:nth-child(n+4) { text-align: right; }
+.earnings-row { cursor: pointer; }
+.earnings-row:hover { background: var(--soft); }
+.earnings-transaction {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+}
+.earnings-transaction:hover { text-decoration: underline; }

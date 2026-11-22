@@ -743,25 +743,32 @@ ipcMain.handle('earnings:load', async (_event, refresh = false) => {
 
 ipcMain.handle('funding:refresh', async () => {
   await requireAephiaAccess();
-  const [{ loadWatchlist }, { loadCachedRows }, { loadAtlasBalance, estimateFunding }, { collectReservationPreflights }] = await Promise.all([
+  const [{ loadWatchlist }, { loadCachedRows }, { loadAtlasBalance, estimateFunding }, { collectReservationPreflights },
+    { findChangedReservations }, { withRpcDeadline }] = await Promise.all([
     domainModule('watchlist-store'), domainModule('fleet-database'), domainModule('funding'), domainModule('reservation-preflight'),
+    domainModule('protocol-snapshot'), domainModule('rpc-fetch-limiter'),
   ]);
   const [watchlist, settings] = await Promise.all([loadWatchlist(watchlistPath()), loadRuntimeSettings()]);
-  const available = await loadAtlasBalance(settings.walletAddress, settings.rpcUrl);
   const cached = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance).map(item => [item.row.entry.id, item]));
   const rows = watchlist.entries.filter(entry => entry.enabled).flatMap(entry => {
     const item = cached.get(entry.id);
     if (!item || item.row.entry.contractAddress !== entry.contractAddress) return [];
     return [{ row: { ...item.row, entry }, fetchedAtMs: item.fetchedAtMs }];
   });
-  const preflights = settings.hotWalletSecret ? collectReservationPreflights(rows.map(item => item.row), settings) : new Map();
+  const [available, changed] = await Promise.all([
+    loadAtlasBalance(settings.walletAddress, settings.rpcUrl),
+    withRpcDeadline(AbortSignal.timeout(10_000), () => findChangedReservations(rows.map(item => item.row), settings.rpcUrl)).catch(() => new Set()),
+  ]);
+  const preflights = settings.hotWalletSecret ? collectReservationPreflights(rows.map(item => item.row), settings, Date.now(), changed) : new Map();
   return rows.map(({ row, fetchedAtMs }) => {
     const { entry, snapshot } = row;
+    const preflight = preflights.get(entry.id) ?? null;
     return {
       id: entry.id, contractAddress: entry.contractAddress, requestedDurationSeconds: entry.requestedDurationSeconds,
       lcfs: entry.lcfs, canSafelyOperate: entry.canSafelyOperate, maximumReservationBidAtlas: entry.maximumReservationBidAtlas,
       maximumRentalRateAtlasPerDay: entry.maximumRentalRateAtlasPerDay, fetchedAtMs,
-      funding: estimateFunding(entry, snapshot, available), preflight: preflights.get(entry.id) ?? null,
+      refreshNeeded: changed.has(entry.id) || preflight?.status === 'stale',
+      funding: estimateFunding(entry, snapshot, available), preflight,
     };
   });
 });

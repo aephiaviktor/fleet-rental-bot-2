@@ -35,6 +35,7 @@ export interface FleetContractSnapshot {
   activeRentalIdentity?: string;
   reservationCurrency: ReservationCurrency | null;
   reservationDefender: string | null;
+  reservationIdentity?: string | null;
   reservationBidAtlas: number | null;
   /** Actual prepaid rent in the queued rental, excluding the contest premium. */
   reservationRentEscrowAtlas?: number | null;

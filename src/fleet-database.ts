@@ -72,6 +72,7 @@ export function saveCachedRow(databasePath: string, instance: string, row: Fleet
         contract_address = excluded.contract_address,
         row_json = excluded.row_json,
         fetched_at_ms = excluded.fetched_at_ms
+      WHERE excluded.fetched_at_ms >= fleet_snapshot_cache.fetched_at_ms
     `).run(instance, row.entry.id, row.entry.contractAddress, JSON.stringify(row), fetchedAtMs);
   } finally {
     database.close();

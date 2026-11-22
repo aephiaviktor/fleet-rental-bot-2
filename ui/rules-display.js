@@ -7,6 +7,7 @@ globalThis.RulesDisplay = {
       case 'authority': return 'Check authority';
       case 'simulation-failed': return 'Simulation failed';
       case 'unavailable': return 'Simulation unavailable';
+      case 'stale': return 'Fleet data changed';
       default: return null;
     }
   },

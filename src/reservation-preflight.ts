@@ -21,7 +21,7 @@ const QUIET_MARGIN_MS = 45_000;
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 export interface PreflightFinding {
-  status: 'passed' | 'low-sol' | 'missing-account' | 'authority' | 'simulation-failed' | 'unavailable';
+  status: 'passed' | 'low-sol' | 'missing-account' | 'authority' | 'simulation-failed' | 'unavailable' | 'stale';
   detail: string;
 }
 
@@ -67,7 +67,7 @@ export function classifyReservationSimulation(error: unknown, logs: readonly str
 function contractKey(snapshot: FleetContractSnapshot): string {
   return JSON.stringify([
     snapshot.activeRentalIdentity, snapshot.activeRentalEndsAtMs, snapshot.reservationDefender,
-    snapshot.reservationCreatedAtMs, snapshot.reservationBidAtlas, snapshot.reservationBidPoints,
+    snapshot.reservationCreatedAtMs, snapshot.reservationBidAtlas, snapshot.reservationBidPoints, snapshot.reservationIdentity,
     snapshot.rentalRateAtlasPerDay, snapshot.reservationsAllowed, snapshot.minimumDurationSeconds, snapshot.maximumDurationSeconds,
   ]);
 }
@@ -81,7 +81,7 @@ export async function checkReservationPreflight(
   signal.throwIfAborted();
   const snapshot = mapContractSnapshot(raw);
   if (contractKey(snapshot) !== contractKey(row.snapshot)) {
-    return { status: 'unavailable', detail: 'The contract or current reservation changed. A fresh fleet refresh is needed.' };
+    return { status: 'stale', detail: 'The contract or current reservation changed. Refreshing fleet data.' };
   }
   const plan = planLcfsReservation(entry, snapshot, position);
   if (plan.kind !== 'ready' || plan.watchOnly) {
@@ -116,7 +116,9 @@ const cached = new Map<string, CachedCheck>();
 let inFlight = false;
 
 /** Collect fresh results and start at most one normal-priority simulation in the background. */
-export function collectReservationPreflights(rows: FleetTableRow[], settings: AppSettings, nowMs = Date.now()): Map<string, CachedCheck> {
+export function collectReservationPreflights(
+  rows: FleetTableRow[], settings: AppSettings, nowMs = Date.now(), changedIds: ReadonlySet<string> = new Set(),
+): Map<string, CachedCheck> {
   const results = new Map<string, CachedCheck>();
   if (!settings.useHeliusSender || !settings.walletAddress || !settings.playerProfile) return results;
   const candidates = [];
@@ -127,6 +129,7 @@ export function collectReservationPreflights(rows: FleetTableRow[], settings: Ap
     const ends = snapshot.activeRentalEndsAtMs;
     if (ends != null && nowMs <= ends + QUIET_MARGIN_MS
       && lcfsSchedule(ends, settings.lcfsLeadTimeSeconds).prepareAtMs <= nowMs + QUIET_MARGIN_MS) quiet = false;
+    if (changedIds.has(entry.id)) continue;
     const plan = planLcfsReservation(entry, snapshot, position, nowMs);
     if (plan.kind !== 'ready' || plan.watchOnly) continue;
     const key = JSON.stringify([settings.rpcUrl, settings.walletAddress, settings.playerProfile, settings.transactionPriorityFeeMicroLamports,
@@ -145,7 +148,9 @@ export function collectReservationPreflights(rows: FleetTableRow[], settings: Ap
   inFlight = true;
   const signal = AbortSignal.timeout(BACKGROUND_BUDGET_MS);
   void withRpcDeadline(signal, () => checkReservationPreflight(next.row, settings, signal))
-    .catch((): PreflightFinding => ({ status: 'unavailable', detail: 'Early LCFS simulation could not complete. The RPC or account data may be unavailable.' }))
+    .catch((): PreflightFinding => ({ status: 'unavailable', detail: signal.aborted
+      ? 'Early LCFS simulation timed out. It will retry automatically.'
+      : 'Early LCFS simulation could not complete. The RPC or account data may be unavailable.' }))
     .then(finding => cached.set(next.key, { ...finding, expiresAtMs: Date.now() + (finding.status === 'passed' ? CHECK_INTERVAL_MS : RETRY_INTERVAL_MS) }))
     .finally(() => { inFlight = false; });
   return results;

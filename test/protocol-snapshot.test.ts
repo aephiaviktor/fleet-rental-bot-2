@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+import { address } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
-import { deriveWalletPosition, mapContractSnapshot } from '../src/protocol-snapshot.js';
+import { NEXT_GEN_SRSLY_PROGRAM_ID } from '../src/model.js';
+import { deriveWalletPosition, findChangedReservations, mapContractSnapshot } from '../src/protocol-snapshot.js';
+import { rentalSdk } from '../src/rental-sdk.js';
 
 function fixture(): ContractSnapshot {
   return {
@@ -58,6 +62,42 @@ test('derives locked ATLAS only when this wallet is the defender', () => {
   assert.deepEqual(deriveWalletPosition(mapped, 'someone-else'), {
     status: 'none', atlasLocked: 0, reservedAtMs: null,
   });
+});
+
+test('finds new zero bids, takeovers, and removals in one queued rental account read', async () => {
+  const { getRentalStateEncoder, RentalStatus } = createRequire(import.meta.url)('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
+  const contracts = ['11111111111111111111111111111111', 'So11111111111111111111111111111111111111112',
+    NEXT_GEN_SRSLY_PROGRAM_ID, 'SysvarC1ock11111111111111111111111111111111'].map(address);
+  const borrower = contracts[1];
+  const base = { version: 2, bump: 255, borrower, borrowerState: borrower, borrowerProfile: borrower, rate: 25,
+    lastPayment: 0, escrow: 1000, startTime: 0, endTime: 0, serviceFee: 0, feeBps: 0, referrer: null,
+    discountBps: 0, bidPoints: 0, bidAtlas: 0, cancelDelayMin: 0, status: RentalStatus.Queued, updatedAt: 10, createdAt: 10 };
+  function account(contract: ReturnType<typeof address>, bidAtlas = 0) {
+    const bytes = getRentalStateEncoder().encode({ ...base, contract, bidAtlas });
+    return { owner: NEXT_GEN_SRSLY_PROGRAM_ID, data: [Buffer.from(bytes).toString('base64'), 'base64'], executable: false, lamports: 1 };
+  }
+  const accounts = [account(contracts[0]), account(contracts[1], 12), null, account(contracts[3])];
+  const queued = `${borrower}:10:0:0:1000`;
+  const rows = [null, queued, queued, queued].map((reservationIdentity, i) => ({
+    entry: { id: `${i}`, contractAddress: contracts[i] },
+    snapshot: { reservationIdentity, reservationDefender: reservationIdentity ? borrower : null },
+  }));
+  const expectedAddresses = await Promise.all(contracts.map(contract => rentalSdk().deriveQueuedRental(contract, NEXT_GEN_SRSLY_PROGRAM_ID)));
+  const savedFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    const { id, method, params } = JSON.parse(String(init?.body));
+    assert.equal(method, 'getMultipleAccounts');
+    assert.deepEqual(params[0], expectedAddresses);
+    return Response.json({ jsonrpc: '2.0', id, result: { context: { slot: 1 }, value: accounts } });
+  };
+  try {
+    assert.deepEqual([...await findChangedReservations(rows, 'https://rpc.example.test')], ['0', '1', '2']);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = savedFetch;
+  }
 });
 
 test('treats any owned player wallet (signer, main, or lancer) as the defender', () => {

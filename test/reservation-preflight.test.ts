@@ -86,6 +86,19 @@ test('simulation distinguishes system rent debits from SPL token errors and SRSL
   assert.equal(classifyReservationSimulation('BlockhashNotFound', [], [rental]).status, 'unavailable');
 });
 
+test('a new reservation makes the preflight stale before it builds a transaction', async () => {
+  const empty = snapshotAt(Math.ceil(Date.now() / 1000) + 3600);
+  const row = buildFleetTableRow(entry, mapContractSnapshot(empty), position);
+  const changed = { ...empty, queuedRental: { address: wallet, data: {
+    borrower: wallet, bidAtlas: 0n, bidPoints: 0n, escrow: 2_500_000_000n, createdAt: 10n,
+  } } } as unknown as ContractSnapshot;
+  const result = await checkReservationPreflight(row, settings, new AbortController().signal, {
+    loadSnapshot: async () => changed,
+    build: async () => { throw new Error('A stale row must refresh before simulating'); },
+  });
+  assert.equal(result.status, 'stale');
+});
+
 test('background preflight yields when a different fleet has an imminent LCFS attempt', async () => {
   const now = Date.now();
   const early = buildFleetTableRow(entry, mapContractSnapshot(snapshotAt(Math.ceil(now / 1000) + 40)), position);
@@ -94,7 +107,7 @@ test('background preflight yields when a different fleet has an imminent LCFS at
   const initialFetch = globalThis.fetch;
   globalThis.fetch = async () => { calls++; throw new Error('Unexpected RPC before close'); };
   try {
-    assert.equal(collectReservationPreflights([later, early], settings, now).size, 0);
+    assert.equal(collectReservationPreflights([later, early], settings, now, new Set([early.entry.id])).size, 0);
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(calls, 0);
   } finally {

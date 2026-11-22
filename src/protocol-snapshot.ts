@@ -1,8 +1,16 @@
+import { createRequire } from 'node:module';
+import { createSolanaRpc } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
-import type { FleetContractSnapshot, WalletOwnership, WalletPosition } from './model.js';
+import { NEXT_GEN_SRSLY_PROGRAM_ID, type FleetContractSnapshot, type FleetWatchEntry, type WalletOwnership, type WalletPosition } from './model.js';
 import { rentalSdk } from './rental-sdk.js';
 
 const DEFAULT_DECIMAL_FACTOR = 100_000_000;
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const { fetchAllMaybeRentalState, RentalStatus } = createRequire(import.meta.url)('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
+
+function queuedIdentity(queued: NonNullable<ContractSnapshot['queuedRental']>['data']): string {
+  return `${queued.borrower}:${queued.createdAt}:${queued.bidAtlas}:${queued.bidPoints}:${queued.escrow}`;
+}
 
 function decimalAmount(value: bigint, factor: bigint): number {
   if (factor <= 0n) throw new Error('Decimal factor must be positive');
@@ -53,6 +61,7 @@ export function mapContractSnapshot(snapshot: ContractSnapshot, fleetName = ''):
     activeRentalEndsAtMs: active ? unixSecondsToMs(BigInt(active.endTime)) : null,
     reservationCurrency,
     reservationDefender: queued ? queued.borrower.toString() : null,
+    reservationIdentity: queued ? queuedIdentity(queued) : null,
     reservationBidAtlas: bidAtlas,
     reservationRentEscrowAtlas: queued ? decimalAmount(BigInt(queued.escrow), atlasFactor) : null,
     reservationBidPoints: bidPoints,
@@ -106,5 +115,38 @@ export async function loadRawContractSnapshot(contractAddress: string, rpcUrl: s
   if (!contractAddress.trim()) throw new Error('Contract address is required');
   if (!rpcUrl.trim()) throw new Error('RPC URL is required');
   const core = rentalSdk();
-  return core.getContractSnapshot({ contractAddress, rpcUrl });
+  const snapshot = await core.getContractSnapshot({ contractAddress, rpcUrl });
+  const { activeRental, queuedRental } = snapshot.contract.data;
+  // The SDK returns null after a rental read fails, even when the contract still points to it.
+  if ((activeRental !== SYSTEM_PROGRAM && snapshot.activeRental?.address !== activeRental)
+    || (queuedRental !== SYSTEM_PROGRAM && snapshot.queuedRental?.address !== queuedRental)) {
+    throw new Error('The contract points to a rental account that could not be loaded.');
+  }
+  return snapshot;
+}
+
+/** Compare queued rental accounts in batches and let the full refresh resolve changes. */
+export async function findChangedReservations(rows: readonly {
+  entry: Pick<FleetWatchEntry, 'id' | 'contractAddress'>;
+  snapshot: Pick<FleetContractSnapshot, 'reservationIdentity' | 'reservationDefender'>;
+}[], rpcUrl: string): Promise<Set<string>> {
+  const changed = new Set<string>();
+  if (!rows.length) return changed;
+  const rpc = createSolanaRpc(rpcUrl);
+  const sdk = rentalSdk();
+  for (let offset = 0; offset < rows.length; offset += 100) {
+    const batch = rows.slice(offset, offset + 100);
+    const addresses = await Promise.all(batch.map(({ entry }) => sdk.deriveQueuedRental(entry.contractAddress, NEXT_GEN_SRSLY_PROGRAM_ID)));
+    const queued = await fetchAllMaybeRentalState(rpc, addresses, { commitment: 'finalized' });
+    for (const [index, row] of batch.entries()) {
+      const account = queued[index];
+      if (account.exists && (account.programAddress !== NEXT_GEN_SRSLY_PROGRAM_ID || account.data.contract !== row.entry.contractAddress)) {
+        throw new Error('Unexpected queued rental account.');
+      }
+      const identity = account.exists && account.data.status === RentalStatus.Queued ? queuedIdentity(account.data) : null;
+      const previous = row.snapshot.reservationIdentity ?? (row.snapshot.reservationDefender ? undefined : null);
+      if (identity !== previous) changed.add(row.entry.id);
+    }
+  }
+  return changed;
 }

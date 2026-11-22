@@ -717,7 +717,7 @@ ipcMain.handle('earnings:load', async (_event, refresh = false) => {
         const { refreshEarningsRates } = await domainModule('earnings-prices');
         const { rows } = readAtlasEarnings(file, settings.playerProfile, roles.addresses);
         const bidTimes = rows.filter(row => row.solFeesAtlas === null && row.bidCostSol > 0).map(row => row.bidAtMs);
-        try { await refreshEarningsRates(file, bidTimes); } catch { failed = true; }
+        try { await refreshEarningsRates(file, bidTimes, settings.aephiaApiKey); } catch { failed = true; }
         return failed;
       })().finally(() => { earningsRefreshes.delete(key); });
       earningsRefreshes.set(key, task);

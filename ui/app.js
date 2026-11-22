@@ -211,7 +211,7 @@ function renderAtlasEarnings(report) {
     bonus.title = row.bonusAtlas == null ? 'An ATLAS bonus could not be verified from this transaction.' : 'Confirmed bonus in ATLAS.';
     const fees = el('td', n(row.solFeesAtlas));
     fees.title = row.bidCostSol == null ? 'The original bid fee could not be verified.'
-      : `${n(row.bidCostSol, 9)} SOL · ${row.solFeesAtlas == null ? 'Historical exchange rate unavailable.' : 'Converted at the prior UTC day’s close.'}`;
+      : `${n(row.bidCostSol, 9)} SOL · ${row.solFeesAtlas == null ? 'Aephia historical exchange rate unavailable.' : 'Converted using the last Aephia prices on the prior UTC day.'}`;
     const net = el('td', n(row.netProfitAtlas));
     net.title = 'Bonus earned minus the ATLAS equivalent of the fees paid to place the bid.';
     const apr = el('td', percent(row.aprPct));

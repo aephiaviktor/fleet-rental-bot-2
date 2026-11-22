@@ -110,27 +110,39 @@ test('reads the confirmed mainnet bonus instead of the refund and verifies the p
   assert.ok(tx.meta.logMessages.some((log: string) => log.startsWith(`Program ${PROGRAM} invoke`)));
 });
 
-test('caches matching completed Kraken daily closes and ignores a day with no ATLAS trades', async () => {
+test('uses authenticated Aephia prices, takes the last same-day observations, and ignores cached Kraken rates', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'priced-fees-'));
   const file = join(folder, 'history.sqlite');
   const fetchBefore = globalThis.fetch;
   const bidAt = Date.now();
   const day = bidPriceDay(bidAt);
-  let calls = 0;
-  globalThis.fetch = async url => {
-    calls++;
-    const pair = new URL(String(url)).searchParams.get('pair')!;
-    const close = pair === 'ATLASUSD' ? '0.001' : '100';
-    return Response.json({ error: [], result: { [pair]: [
-      [day - 86_400, close, close, close, close, close, '1000', pair === 'ATLASUSD' ? 0 : 4],
-      [day, close, close, close, close, close, '1000', 4],
-      [day + 86_400, close, close, close, close, close, '1000', 4],
-    ] } });
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, 'https://api.aephia.com');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer test-key');
+    assert.equal(init?.redirect, 'error');
+    assert.equal(url.searchParams.get('from'), new Date((day - 86_400) * 1000).toISOString());
+    assert.equal(url.searchParams.get('to'), new Date((day + 86_400) * 1000 - 1).toISOString());
+    const token = url.pathname.split('/').at(-1)!;
+    assert.equal(url.pathname, `/v1/market/tokens/${token}`);
+    calls.push(token);
+    const price = token === 'atlas' ? 0.001 : 100;
+    const rows = [[price, day * 1000 + 600_000], [price * 2, day * 1000], [price * 3, (day + 86_400) * 1000]];
+    if (token === 'sol') rows.push([100, (day - 86_400) * 1000]);
+    return Response.json({ kind: 'token', token, columns: ['price', 'ts'], rows });
   };
   try {
-    await refreshEarningsRates(file, [bidAt, bidAt - DAY]);
-    await refreshEarningsRates(file, [bidAt]);
-    assert.equal(calls, 2);
+    const legacy = new DatabaseSync(file);
+    try {
+      legacy.exec('CREATE TABLE earnings_rates(day INTEGER PRIMARY KEY, atlas_per_sol REAL NOT NULL)');
+      legacy.prepare('INSERT INTO earnings_rates VALUES (?, ?)').run(day, 500);
+      assert.equal(readEarningsRates(legacy).size, 0);
+    } finally { legacy.close(); }
+    await assert.rejects(refreshEarningsRates(file, [bidAt], ''), /API key is required/);
+    await refreshEarningsRates(file, [bidAt, bidAt - DAY], 'test-key');
+    await refreshEarningsRates(file, [bidAt], 'test-key');
+    assert.deepEqual(calls.sort(), ['atlas', 'sol']);
     const db = new DatabaseSync(file);
     try { assert.deepEqual([...readEarningsRates(db)], [[day, 100_000]]); } finally { db.close(); }
   } finally {

@@ -28,9 +28,11 @@ prevent duplicate automatic sends for the same row and rental end across refresh
 
 ## Bonus Strategy
 
-Bonus Strategy scans the SRSLY market for contracts that accept reservations. The
-Min rate/d filter defaults to 3,000 ATLAS and the list puts the shortest minimum rental
-durations first. Set a positive Max bid and enable FCFS directly on a market listing.
+Bonus Strategy scans reservable fleets in the Player Profile’s on-chain faction. It
+requires the configured Min rate/d (3,000 ATLAS by default) and at least two distinct
+player profiles with confirmed bids in the final 60 seconds of the last completed
+reservation period. The list puts the shortest minimum rental durations first. Set a
+positive Max bid and enable FCFS directly on a qualifying listing.
 FCFS is saved per Player Profile and uses the signing wallet and Helius Sender.
 For fleets also in Fleet Reservations, FCFS checks that the fleet is enabled and safe.
 
@@ -40,3 +42,12 @@ protocol minimum requires it. A rival can be overbid repeatedly while the active
 has at least 24 hours left and the required premium fits the fleet's Max bid. The funding
 check includes the premium and prepaid rent. A bid still holding at handover becomes
 a paid rental.
+
+### Planned new-listing evaluation
+
+For new listings without reservation history, estimate Net value/d from a realistic
+mining route and executable resource prices. Subtract fuel, food, ammo, and other
+operating costs from daily output value. Compare that estimate with the all-in daily
+rental cost, including the premium spread over the term, to identify provisional
+candidates. Evaluate a 12-hour continuous-vacancy cutoff at the asking rate as a
+separate demand signal.

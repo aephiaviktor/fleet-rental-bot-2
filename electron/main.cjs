@@ -264,16 +264,27 @@ async function pollBonusStrategy() {
       return;
     }
     await requireAephiaAccess();
-    const [{ withRpcDeadline }, { pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid }] = await Promise.all([
-      domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'),
+    const [{ withRpcDeadline }, { resolveBonusFaction, pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid },
+      { bonusDemandContext, verifyBonusDemand, MINIMUM_DEMAND_PROFILES }] = await Promise.all([
+      domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'), domainModule('bonus-demand'),
     ]);
     if (!current()) return;
-    const fleets = await withRpcDeadline(AbortSignal.timeout(12_000), () => pollBonusFleets(armed.map(({ entry }) => entry.contractAddress), settings.rpcUrl));
+    const faction = await withRpcDeadline(AbortSignal.timeout(10_000), () => resolveBonusFaction(settings.playerProfile, settings.rpcUrl)).catch(() => null);
+    if (!faction) {
+      status.message = 'FCFS is paused until the Player Profile faction can be verified.';
+      return;
+    }
+    if (!current()) return;
+    const { fleets, outsideFaction } = await withRpcDeadline(AbortSignal.timeout(12_000), () => pollBonusFleets(
+      armed.map(({ entry }) => entry.contractAddress), settings.rpcUrl, faction,
+    ));
+    if (outsideFaction.size) status.message = `${outsideFaction.size} FCFS rule(s) paused outside ${faction}.`;
     const work = armed.map(({ entry, rule }) => ({ entry, fleet: fleets.get(entry.contractAddress), rule }));
     work.sort((a, b) => (a.fleet?.snapshot.minimumDurationSeconds ?? Infinity) - (b.fleet?.snapshot.minimumDurationSeconds ?? Infinity));
     for (const { entry, fleet, rule } of work) {
       if (!current()) break;
       const contract = entry.contractAddress;
+      if (outsideFaction.has(contract)) continue;
       if (!fleet) {
         status.rows[contract] = { status: 'warning', detail: 'Live rental state unavailable' };
         continue;
@@ -282,13 +293,24 @@ async function pollBonusStrategy() {
       const nowMs = fleet.raw.nowSeconds * 1_000;
       const plan = planBonusReservation(entry, rule, snapshot, ourBonusDefender(fleet.raw, settings), nowMs);
       const row = {
+        faction,
         rate: snapshot.rentalRateAtlasPerDay, minimumSeconds: snapshot.minimumDurationSeconds,
         endsAtMs: snapshot.activeRentalEndsAtMs, bidAtlas: plan.kind === 'ready' ? plan.bidAtlas : null,
         requiredAtlas: plan.kind === 'ready' ? plan.requiredAtlas : null,
       };
       try {
+        if (snapshot.rentalRateAtlasPerDay < strategy.minimumRateAtlasPerDay) {
+          status.rows[contract] = { ...row, status: 'waiting', detail: 'FCFS paused below Min rate/d' };
+          continue;
+        }
+        const demand = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, bonusDemandContext(fleet.raw)));
+        if (demand == null || demand < MINIMUM_DEMAND_PROFILES) {
+          status.rows[contract] = { ...row, status: 'waiting', detail: 'FCFS paused until the latest period meets the demand rule' };
+          continue;
+        }
+        if (!current()) break;
         const outcome = await withRpcDeadline(AbortSignal.timeout(15_000), () => executeBonusBid(
-          entry, rule, fleet, settings, directory, historyDatabasePath(), async () => {
+          entry, rule, fleet, { ...settings, faction }, directory, historyDatabasePath(), async () => {
             await requireAephiaAccess();
             return Boolean(current());
           },
@@ -636,26 +658,53 @@ ipcMain.handle('bonus:load', async event => {
 ipcMain.handle('bonus:market', async (event, refresh) => {
   await requireAephiaAccess();
   requireTrustedUpdaterRenderer(event);
-  const { rpcUrl } = await loadRuntimeSettings();
-  if (bonusMarketCache?.rpcUrl !== rpcUrl) bonusMarketCache = { rpcUrl, report: null, pending: null };
+  const { rpcUrl, playerProfile: profile } = await loadRuntimeSettings();
+  if (!profile) return { rows: [], faction: null, error: 'Configure a Player Profile in Settings to scan its faction.' };
+  const [{ discoverBonusMarket, resolveBonusFaction }, { withRpcDeadline }] = await Promise.all([
+    domainModule('bonus-strategy'), domainModule('rpc-fetch-limiter'),
+  ]);
+  const faction = await withRpcDeadline(AbortSignal.timeout(10_000), () => resolveBonusFaction(profile, rpcUrl)).catch(() => null);
+  if (!faction) return { rows: [], faction: null, error: 'The Player Profile faction could not be verified. Check the profile and configured RPC.' };
+  if (bonusMarketCache?.rpcUrl !== rpcUrl || bonusMarketCache.faction !== faction) {
+    bonusMarketCache = { rpcUrl, faction, report: null, pending: null };
+  }
   const cache = bonusMarketCache;
   if (cache.pending) return cache.pending;
   if (refresh !== true && cache.report && Date.now() - cache.report.fetchedAtMs < 55_000) return cache.report;
   cache.pending = (async () => {
     try {
-      const [{ discoverBonusMarket }, { withRpcDeadline }] = await Promise.all([
-        domainModule('bonus-strategy'), domainModule('rpc-fetch-limiter'),
-      ]);
-      const rows = await withRpcDeadline(AbortSignal.timeout(120_000), () => discoverBonusMarket(rpcUrl));
-      cache.report = { rows, fetchedAtMs: Date.now(), error: null };
+      const rows = await withRpcDeadline(AbortSignal.timeout(120_000), () => discoverBonusMarket(rpcUrl, faction));
+      cache.report = { rows, faction, fetchedAtMs: Date.now(), error: null };
       return cache.report;
     } catch {
-      return { rows: cache.report?.rows ?? [], fetchedAtMs: cache.report?.fetchedAtMs ?? null, error: 'Market scan unavailable. Check the configured RPC.' };
+      return { rows: cache.report?.rows ?? [], faction, fetchedAtMs: cache.report?.fetchedAtMs ?? null, error: 'Market scan unavailable. Check the configured RPC.' };
     } finally {
       cache.pending = null;
     }
   })();
   return cache.pending;
+});
+
+ipcMain.handle('bonus:demand', async (event, profile, contracts) => {
+  await requireAephiaAccess();
+  requireTrustedUpdaterRenderer(event);
+  const settings = await loadRuntimeSettings();
+  const cache = bonusMarketCache;
+  if (profile !== settings.playerProfile || cache?.rpcUrl !== settings.rpcUrl || !cache.report) return [];
+  if (!Array.isArray(contracts) || contracts.length > 4) throw new Error('Invalid demand check request');
+  const lookup = new Map(cache.report.rows.map(row => [row.contractAddress, row.demand]));
+  const [{ withRpcDeadline }, { verifyBonusDemand, MINIMUM_DEMAND_PROFILES }] = await Promise.all([
+    domainModule('rpc-fetch-limiter'), domainModule('bonus-demand'),
+  ]);
+  return Promise.all([...new Set(contracts)].filter(contract => lookup.has(contract)).map(async contract => {
+    const context = lookup.get(contract);
+    if (!context) return { contract, revision: null, profiles: null, qualifies: false };
+    let profiles;
+    try {
+      profiles = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, context));
+    } catch { profiles = null; }
+    return { contract, revision: context.revision, profiles, qualifies: profiles >= MINIMUM_DEMAND_PROFILES };
+  }));
 });
 
 ipcMain.handle('bonus:save', async (event, profile, configuration) => {

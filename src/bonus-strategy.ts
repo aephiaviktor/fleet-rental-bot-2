@@ -1,16 +1,18 @@
 import {
   address, createSolanaRpc, fetchEncodedAccounts, getSignatureFromTransaction, getTransactionDecoder, signature,
-  type Base64EncodedWireTransaction, type Instruction,
+  type Address, type Base64EncodedWireTransaction, type Instruction,
 } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { bonusDemandContext, type BonusDemandContext } from './bonus-demand.js';
 import { clearPendingBonusBid, readPendingBonusBid, savePendingBonusBid, type BonusRule } from './bonus-store.js';
 import { loadAtlasBalance, recordPendingFunding, requiredAtlasFunding, withFundingLock } from './funding.js';
 import { prepareSenderTransaction, submitPreparedToHelius } from './lcfs.js';
 import { NEXT_GEN_SRSLY_PROGRAM_ID, type FleetContractSnapshot, type FleetWatchEntry } from './model.js';
 import type { AtlasReservationPlan } from './reservation-plan.js';
 import { loadRawContractSnapshot, mapContractSnapshot } from './protocol-snapshot.js';
+import { resolvePlayerFaction, type PlayerFaction } from './profile-faction.js';
 import { MAINNET_SAGE_PROGRAM, rentalSdk } from './rental-sdk.js';
 import { recordBidIntent } from './rental-history.js';
 import { withRpcDeadline } from './rpc-fetch-limiter.js';
@@ -85,7 +87,15 @@ export async function readBonusFleet(contractAddress: string, rpcUrl: string) {
 }
 
 type BonusFleet = Awaited<ReturnType<typeof readBonusFleet>>;
-type RuntimeSettings = AppSettings & { hotWalletSecret: string };
+export type BonusFaction = Exclude<PlayerFaction, 'UNALIGNED'>;
+const FACTION_IDS = { MUD: 1, ONI: 2, USTUR: 3 } as const;
+type RuntimeSettings = AppSettings & { hotWalletSecret: string; faction: BonusFaction };
+
+export async function resolveBonusFaction(playerProfile: string, rpcUrl: string): Promise<BonusFaction> {
+  const { faction } = await resolvePlayerFaction(playerProfile, rpcUrl);
+  if (faction === 'UNALIGNED') throw new Error('Bonus Strategy requires an aligned Player Profile');
+  return faction;
+}
 
 type ContractAccount = ContractSnapshot['contract'];
 type Rpc = ReturnType<typeof createSolanaRpc>;
@@ -119,18 +129,25 @@ async function readBonusSnapshots(
 }
 
 /** Poll armed fleets in batches. A bid still requires an individual fresh read. */
-export async function pollBonusFleets(contracts: string[], rpcUrl: string): Promise<Map<string, BonusFleet>> {
+export async function pollBonusFleets(contracts: string[], rpcUrl: string, faction: BonusFaction) {
   const rpc = createSolanaRpc(rpcUrl);
   const sdk = rentalSdk();
   const receivedAtMs = performance.now();
   const [config, nowSeconds] = await Promise.all([sdk.fetchConfig(rpcUrl), sdk.fetchChainNowSeconds(rpcUrl)]);
   const fleets = new Map<string, BonusFleet>();
+  const outsideFaction = new Set<string>();
   for (let offset = 0; offset < contracts.length; offset += BATCH_SIZE) {
     const accounts = await fetchAllMaybeContractState(rpc, contracts.slice(offset, offset + BATCH_SIZE).map(address), { commitment: 'finalized' });
     const valid = accounts.filter(account => account.exists).filter(account => account.programAddress === NEXT_GEN_SRSLY_PROGRAM_ID);
-    for (const [contract, snapshot] of await readBonusSnapshots(rpc, valid, config, nowSeconds, receivedAtMs)) fleets.set(contract, snapshot);
+    const metadata = await readBonusFleetMetadata(rpc, valid.map(({ data }) => data.fleet));
+    const matched = valid.filter(contract => {
+      const fleet = metadata.get(contract.data.fleet);
+      if (fleet && fleet.faction !== FACTION_IDS[faction]) outsideFaction.add(contract.address);
+      return fleet?.faction === FACTION_IDS[faction];
+    });
+    for (const [contract, snapshot] of await readBonusSnapshots(rpc, matched, config, nowSeconds, receivedAtMs)) fleets.set(contract, snapshot);
   }
-  return fleets;
+  return { fleets, outsideFaction };
 }
 
 export interface BonusMarketFleet {
@@ -141,11 +158,29 @@ export interface BonusMarketFleet {
   endsAtMs: number | null;
   bidAtlas: number | null;
   stateKnown: boolean;
+  demand: BonusDemandContext | null;
 }
 
 const FLEET_DISCRIMINATOR = createHash('sha256').update('account:Fleet').digest().subarray(0, 8);
 
-export async function discoverBonusMarket(rpcUrl: string): Promise<BonusMarketFleet[]> {
+async function readBonusFleetMetadata(rpc: Rpc, addresses: Address[]) {
+  const metadata = new Map<Address, { name: string; faction: number }>();
+  if (!addresses.length) return metadata;
+  const fleets = await fetchEncodedAccounts(rpc, [...new Set(addresses)], { commitment: 'finalized' });
+  for (const fleet of fleets) {
+    if (!fleet.exists || fleet.programAddress !== MAINNET_SAGE_PROGRAM) continue;
+    const bytes = Buffer.from(fleet.data);
+    if (!bytes.subarray(0, 8).equals(FLEET_DISCRIMINATOR)) continue;
+    try {
+      const { fleetLabel, faction } = getFleetDecoder().decode(bytes.subarray(8));
+      const name = Buffer.from(fleetLabel).toString('utf8').replace(/\0/g, '').trim() || fleet.address;
+      metadata.set(fleet.address, { name, faction });
+    } catch { /* An unreadable fleet cannot be verified for faction-specific FCFS. */ }
+  }
+  return metadata;
+}
+
+export async function discoverBonusMarket(rpcUrl: string, faction: BonusFaction): Promise<BonusMarketFleet[]> {
   const sdk = rentalSdk();
   const rpc = createSolanaRpc(rpcUrl);
   const receivedAtMs = performance.now();
@@ -153,38 +188,28 @@ export async function discoverBonusMarket(rpcUrl: string): Promise<BonusMarketFl
   if (!config.data.reservationsEnabled) return [];
   const contracts = listed.filter(({ data }) => !data.toClose && !data.reservationsDisabled);
   const rows: BonusMarketFleet[] = [];
-  const fleetNames = new Map<string, string>();
-  for (let offset = 0; offset < contracts.length; offset += BATCH_SIZE) {
-    const batch = contracts.slice(offset, offset + BATCH_SIZE);
-    const unknownFleets = [...new Set(batch.map(({ data }) => data.fleet))].filter(fleet => !fleetNames.has(fleet));
-    const [snapshots, fleets] = await Promise.all([
-      readBonusSnapshots(rpc, batch, config, nowSeconds, receivedAtMs),
-      unknownFleets.length ? fetchEncodedAccounts(rpc, unknownFleets, { commitment: 'finalized' }) : [],
-    ]);
-    for (const fleet of fleets) {
-      let name: string = fleet.address;
-      if (fleet.exists && fleet.programAddress === MAINNET_SAGE_PROGRAM) {
-        const bytes = Buffer.from(fleet.data);
-        if (bytes.subarray(0, 8).equals(FLEET_DISCRIMINATOR)) {
-          try {
-            const { fleetLabel } = getFleetDecoder().decode(bytes.subarray(8));
-            name = Buffer.from(fleetLabel).toString('utf8').replace(/\0/g, '').trim() || name;
-          } catch { /* Keep the fleet address when its label cannot be decoded. */ }
-        }
-      }
-      fleetNames.set(fleet.address, name);
-    }
+  const metadata = new Map<Address, { name: string; faction: number }>();
+  const addresses = [...new Set(contracts.map(({ data }) => data.fleet))];
+  for (let offset = 0; offset < addresses.length; offset += 100) {
+    for (const [fleet, data] of await readBonusFleetMetadata(rpc, addresses.slice(offset, offset + 100))) metadata.set(fleet, data);
+  }
+  const matched = contracts.filter(({ data }) => metadata.get(data.fleet)?.faction === FACTION_IDS[faction]);
+  for (let offset = 0; offset < matched.length; offset += BATCH_SIZE) {
+    const batch = matched.slice(offset, offset + BATCH_SIZE);
+    const snapshots = await readBonusSnapshots(rpc, batch, config, nowSeconds, receivedAtMs);
     for (const contract of batch) {
-      const snapshot = snapshots.get(contract.address)?.snapshot;
+      const fleet = snapshots.get(contract.address);
+      const snapshot = fleet?.snapshot;
       const rate = snapshot?.rentalRateAtlasPerDay
         ?? Number(sdk.rateAfterStaleDecay(contract.data, config.data, nowSeconds)) / Number(config.data.stardustToAtlas || 100_000_000n);
       const endsAtMs = snapshot?.activeRentalEndsAtMs ?? null;
       const bidAtlas = snapshot?.currentMinimumBidAtlas;
       rows.push({
-        contractAddress: contract.address, fleetName: fleetNames.get(contract.data.fleet) ?? contract.data.fleet,
+        contractAddress: contract.address, fleetName: metadata.get(contract.data.fleet)?.name ?? contract.data.fleet,
         rate, minimumSeconds: Number(contract.data.durationMinSeconds), endsAtMs,
         bidAtlas: endsAtMs != null && endsAtMs > nowSeconds * 1_000 && bidAtlas != null ? Math.max(rate, bidAtlas) : null,
         stateKnown: Boolean(snapshot),
+        demand: fleet ? bonusDemandContext(fleet.raw) : null,
       });
     }
   }
@@ -243,6 +268,12 @@ export async function executeBonusBid(
     commitment: 'confirmed', encoding: 'base64', sigVerify: true,
   }).send();
   const fresh = await readBonusFleet(contract, rpcUrl);
+  const fleetAddress = fresh.raw.contract.data.fleet;
+  if (fleetAddress !== fleet.raw.contract.data.fleet) return waiting('Rental fleet changed · refreshing quote');
+  const metadata = await readBonusFleetMetadata(rpc, [fleetAddress]);
+  if (metadata.get(fleetAddress)?.faction !== FACTION_IDS[settings.faction]) {
+    return warning('Fleet faction could not be verified for this profile');
+  }
   const latest = planBonusReservation(entry, rule, fresh.snapshot, ourBonusDefender(fresh.raw, settings), chainNow(fresh));
   if (latest.kind === 'blocked') return waiting(latest.detail);
   if (fresh.snapshot.activeRentalIdentity !== fleet.snapshot.activeRentalIdentity

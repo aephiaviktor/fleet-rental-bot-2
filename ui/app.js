@@ -298,21 +298,24 @@ function renderBonusStrategy(force = false) {
   const note = $('bonus-status');
   note.textContent = bonusError || (bonusSaving ? 'Saving…' : report?.message) || '';
   note.classList.toggle('error', Boolean(bonusError));
-  const market = bonusMarket && bonusMarket.rpcUrl === S.settings?.rpcUrl ? bonusMarket.report : null;
+  const scan = bonusMarket?.profile === profile && bonusMarket.rpcUrl === S.settings?.rpcUrl ? bonusMarket : null;
+  const market = scan?.report;
   const marketNote = $('bonus-market-status');
-  const scanning = bonusMarketRequest && bonusMarketRequest.rpcUrl === S.settings?.rpcUrl;
+  const scanning = bonusMarketRequest?.profile === profile && bonusMarketRequest.rpcUrl === S.settings?.rpcUrl;
   $('bonus-scan').disabled = scanning;
   marketNote.textContent = scanning ? 'Scanning SRSLY market…' : '';
   if (!configuration) {
     note.textContent ||= 'Loading Bonus Strategy…';
     return;
   }
-  if (!profile) note.textContent ||= 'Configure a Player Profile in Settings to enable FCFS.';
   const rules = new Map(configuration.rules.map(rule => [rule.contractAddress, rule]));
   const watched = new Map((S.document?.entries ?? []).map(entry => [entry.contractAddress, entry]));
   const catalog = new Map((market?.rows ?? []).map(row => [row.contractAddress, row]));
-  const contracts = new Set([...catalog.keys(), ...configuration.rules.filter(rule => rule.fcfs).map(rule => rule.contractAddress)]);
-  const rows = [...contracts].map(contractAddress => {
+  const candidates = [...catalog.values()].filter(row => row.rate >= configuration.minimumRateAtlasPerDay);
+  const rows = candidates.filter(row => {
+    const proof = scan.demand.get(row.contractAddress);
+    return proof?.qualifies && proof.revision === row.demand?.revision;
+  }).map(({ contractAddress }) => {
     const listing = catalog.get(contractAddress);
     const entry = watched.get(contractAddress);
     const result = entry && S.live.get(entry.id);
@@ -326,12 +329,13 @@ function renderBonusStrategy(force = false) {
       duration: live?.minimumSeconds ?? listing?.minimumSeconds ?? snapshot?.minimumDurationSeconds,
       ends: live?.rate == null ? listing?.endsAtMs : live.endsAtMs,
     };
-  }).filter(({ rate, rule }) => rule.fcfs || rate >= configuration.minimumRateAtlasPerDay);
-  if (!scanning) {
-    const visible = rows.filter(row => row.listing).length;
-    const count = market?.fetchedAtMs == null ? '' : `${visible} of ${catalog.size} reservable fleets`;
-    marketNote.textContent = market?.error ? [market.error, count && `Showing last scan · ${count}`].filter(Boolean).join(' ') : count;
-  }
+  }).filter(({ rate }) => rate >= configuration.minimumRateAtlasPerDay);
+  if (scan && market.fetchedAtMs != null) {
+    const checked = candidates.filter(row => scan.demand.has(row.contractAddress)).length;
+    const unknown = candidates.filter(row => scan.demand.get(row.contractAddress)?.profiles === null).length;
+    const count = `${rows.length} qualifying ${market.faction} fleets · ${checked}/${candidates.length} demand checks`;
+    marketNote.textContent = [market.error, count, unknown ? `${unknown} without verified history` : ''].filter(Boolean).join(' · ');
+  } else if (market?.error) marketNote.textContent = market.error;
   rows.sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity)
     || (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
   for (const { contractAddress, listing, entry, rule, live, name, rate, duration, ends } of rows) {
@@ -374,26 +378,53 @@ function renderBonusStrategy(force = false) {
       el('td', n(nextBid)), required, ending, capCell, fcfsCell, status);
     body.append(tr);
   }
-  if (!rows.length && !note.textContent && market?.fetchedAtMs) {
-    note.textContent = market.rows.length ? 'No fleets match the minimum rate.' : 'The market has no reservable fleets.';
+  if (!scanning && !rows.length && !note.textContent && market?.fetchedAtMs) {
+    note.textContent = 'No fleets meet both the minimum rate and demand rule.';
   }
 }
 
-async function scanBonusMarket(refresh = false) {
+async function scanBonusMarket(refresh = false, restart = false) {
   clearTimeout(bonusMarketTimer);
   if ($('bonus-panel').hidden) return;
   const rpcUrl = S.settings?.rpcUrl;
-  if (bonusMarketRequest?.rpcUrl === rpcUrl) return;
-  const request = { rpcUrl };
+  const profile = S.settings?.playerProfile || '';
+  if (!restart && bonusMarketRequest?.profile === profile && bonusMarketRequest.rpcUrl === rpcUrl) return;
+  const request = { rpcUrl, profile };
+  const current = () => bonusMarketRequest === request && S.settings?.rpcUrl === rpcUrl
+    && (S.settings?.playerProfile || '') === profile;
   bonusMarketRequest = request;
   renderBonusStrategy();
   try {
     const report = await window.fleetRentalBot.loadBonusMarket(refresh);
-    if (bonusMarketRequest === request && S.settings?.rpcUrl === rpcUrl) bonusMarket = { rpcUrl, report };
-  } catch (error) {
-    if (bonusMarketRequest === request && S.settings?.rpcUrl === rpcUrl) {
-      const cached = bonusMarket?.rpcUrl === rpcUrl ? bonusMarket?.report : null;
-      bonusMarket = { rpcUrl, report: { rows: cached?.rows ?? [], fetchedAtMs: cached?.fetchedAtMs, error: error.message } };
+    if (!current()) return;
+    const previous = bonusMarket?.profile === profile && bonusMarket.rpcUrl === rpcUrl ? bonusMarket.demand : null;
+    const demand = new Map();
+    for (const row of report.rows) {
+      const proof = previous?.get(row.contractAddress);
+      if (proof?.revision === row.demand?.revision && proof?.profiles != null) demand.set(row.contractAddress, proof);
+    }
+    bonusMarket = { rpcUrl, profile, report, demand };
+    renderBonusStrategy();
+    if (report.error || bonusStrategy?.profile !== profile) return;
+    const threshold = bonusStrategy.configuration.minimumRateAtlasPerDay;
+    const contracts = report.rows.filter(row => row.rate >= threshold).map(row => row.contractAddress);
+    const batchSize = Math.max(1, Math.min(4, Math.floor(S.settings?.rpcRequestsPerSecond ?? 4)));
+    for (let offset = 0; offset < contracts.length && current() && !$('bonus-panel').hidden; offset += batchSize) {
+      const proofs = await window.fleetRentalBot.checkBonusDemand(profile, contracts.slice(offset, offset + batchSize));
+      if (!current()) return;
+      for (const proof of proofs) {
+        const prior = demand.get(proof.contract);
+        if (proof.profiles !== null || prior?.revision !== proof.revision) demand.set(proof.contract, proof);
+      }
+      renderBonusStrategy();
+    }
+  } catch {
+    if (current()) {
+      const cached = bonusMarket?.profile === profile && bonusMarket.rpcUrl === rpcUrl ? bonusMarket : null;
+      bonusMarket = {
+        rpcUrl, profile, demand: cached?.demand ?? new Map(),
+        report: { rows: [], ...cached?.report, error: 'Market or demand checks interrupted. Use Scan market to retry.' },
+      };
     }
   } finally {
     if (bonusMarketRequest === request) {
@@ -409,11 +440,11 @@ async function showBonusStrategy() {
   bonusLoading = load;
   bonusError = '';
   renderBonusStrategy(true);
-  void scanBonusMarket();
   try {
     const result = await window.fleetRentalBot.loadBonusStrategy();
     if (bonusLoading !== load || (S.settings?.playerProfile || '') !== result.profile) return;
     bonusStrategy = { profile: result.profile, configuration: result.configuration };
+    void scanBonusMarket();
     if (result.status && latestBonusStatus?.profile !== result.profile) latestBonusStatus = result.status;
   } catch (error) {
     if (bonusLoading === load) bonusError = error.message;
@@ -424,13 +455,16 @@ async function showBonusStrategy() {
 
 async function saveBonusConfiguration(configuration) {
   if (!bonusStrategy || bonusSaving) return;
-  const { profile } = bonusStrategy;
+  const { profile, configuration: previous } = bonusStrategy;
   bonusSaving = true;
   bonusError = '';
   renderBonusStrategy(true);
   try {
     const saved = await window.fleetRentalBot.saveBonusStrategy(profile, configuration);
-    if (S.settings?.playerProfile === profile) bonusStrategy = { profile, configuration: saved };
+    if (S.settings?.playerProfile === profile) {
+      bonusStrategy = { profile, configuration: saved };
+      if (previous.minimumRateAtlasPerDay !== saved.minimumRateAtlasPerDay) void scanBonusMarket(false, true);
+    }
   } catch (error) {
     bonusError = error.message;
   } finally {

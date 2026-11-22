@@ -15,17 +15,28 @@ function checkCell(entry) {
   const snapshot = result?.ok && result.source === 'live' && result.row.entry.contractAddress === entry.contractAddress
     ? result.row.snapshot : null;
   const durationWarning = RulesDisplay.durationWarning(entry.requestedDurationSeconds, snapshot);
+  const contractWarning = snapshot?.reservationsAllowed === false;
   const funding = fundingValue(entry);
   const status = funding?.status ?? 'unknown';
-  const cell = durationWarning
-    ? el('td', 'Days out of range', 'live check-duration')
-    : el('td', RulesDisplay.fundingLabel(funding), `live funding-${status}`);
+  const lcfsConfigured = entry.enabled && entry.lcfs && entry.canSafelyOperate && S.settings?.useHeliusSender && S.settings?.hotWalletAddress;
+  const finding = snapshot && funding && lcfsConfigured ? result.row.preflight : null;
+  const preflight = finding?.expiresAtMs > Date.now() ? finding : null;
+  const preflightLabel = RulesDisplay.preflightLabel(preflight?.status);
+  const blockers = [
+    durationWarning && 'Days out of range',
+    contractWarning && 'Reservations closed',
+    preflight?.status !== 'unavailable' && (preflight?.status !== 'simulation-failed' || status !== 'short') && preflightLabel,
+  ].filter(Boolean);
+  const label = blockers[0] || (status === 'ready' ? preflightLabel : null) || RulesDisplay.fundingLabel(funding);
+  const style = blockers.length ? 'check-error' : status === 'ready' && preflightLabel ? 'funding-unknown' : `funding-${status}`;
+  const cell = el('td', label, `live ${style}`);
   const fundingDetail = funding
     ? `${entry.lcfs ? 'LCFS on: rent plus bid. ' : 'LCFS off: rent only. '}${funding.limitDetail ? funding.limitDetail + ' ' : ''}`
       + `Available: ${n(funding.availableAtlas)} ATLAS. Required bid: ${n(funding.bidAtlas)}. Rent escrow: ${n(funding.escrowAtlas)}. Total required: ${n(funding.requiredAtlas)}. `
       + 'Per-fleet estimate based on the last contract refresh and a balance checked every 30 seconds, less pending bids in this app process. Other apps can spend from the same wallet. Existing escrow and expected refunds are excluded.'
     : 'Funding unavailable or stale. Waiting for a fresh balance and contract check.';
-  cell.title = durationWarning ? `${durationWarning}\n${fundingDetail}` : fundingDetail;
+  cell.title = [durationWarning, contractWarning && 'This contract is closed, closing, or has reservations disabled.',
+    preflight?.detail || (lcfsConfigured && 'No current early LCFS simulation result.'), fundingDetail].filter(Boolean).join('\n');
   return cell;
 }
 function liveCell(entry,id){if(id==='funding')return checkCell(entry);const value=liveValue(entry,id),column=S.columns.find(x=>x.id===id),td=el('td',value,'live');if(id==='positionStatus'){const status=S.live.get(entry.id)?.row?.position?.status;td.classList.add('our-bid',status==='defending'?'ours':status==='unknown'?'unknown':'other');td.title=status==='unknown'?'Profile ownership could not be verified; acquisition-first fallback active':`${column?.label??id}: ${value}`}else td.title=id==='atlasLocked'?`Bid + rent escrow: ${value}`:id==='endingIn'?RulesDisplay.utc(S.live.get(entry.id)?.row?.snapshot?.activeRentalEndsAtMs):`${column?.label??id}: ${value}`;return td}
@@ -33,7 +44,29 @@ function cacheAge(fetchedAtMs){const minutes=Math.max(0,Math.floor((Date.now()-f
 async function save(){ $('save-state').textContent='Saving…';try{await window.fleetRentalBot.saveWatchlist(S.document);$('save-state').textContent='Saved';renderLcfsOutcomes()}catch(e){$('save-state').textContent=e.message||'Save failed'}}
 function addRow(){S.document.entries.push({id:crypto.randomUUID(),label:'',contractAddress:'',requestedDurationSeconds:2073600,estimatedNetValueAtlas:null,maximumRentalRateAtlasPerDay:0,maximumReservationBidAtlas:0,canSafelyOperate:true,enabled:true,comment:'',lcfs:false});render();const rows=$('rental-rules-body').querySelectorAll('tr');rows[rows.length-1].querySelector('[data-field=contractAddress]').focus()}
 function summary(){}
-function scheduleCountdownRender(){clearTimeout(S.countdownTimer);S.countdownTimer=setTimeout(()=>{render();scheduleCountdownRender()},60000)}async function scheduleEntryRefresh(id,result=S.live.get(id)){clearTimeout(S.timers.get(id));const delay=result?.ok?await window.fleetRentalBot.getNextRefreshDelay([result.row.snapshot.activeRentalEndsAtMs??null]):300000;const timer=setTimeout(()=>void refresh([id]).catch(error=>{$('save-state').textContent=error.message||'Refresh unavailable';void scheduleEntryRefresh(id)}),delay);S.timers.set(id,timer)}async function refreshFunding(){clearTimeout(S.fundingTimer);try{const items=await window.fleetRentalBot.refreshFunding();for(const item of items){const result=S.live.get(item.id),entry=S.document.entries.find(e=>e.id===item.id);if(result?.ok&&result.source==='live'&&entry?.contractAddress===item.contractAddress&&entry.requestedDurationSeconds===item.requestedDurationSeconds&&entry.lcfs===item.lcfs&&entry.maximumReservationBidAtlas===item.maximumReservationBidAtlas&&entry.maximumRentalRateAtlasPerDay===item.maximumRentalRateAtlasPerDay)result.row.funding=item.funding}render()}catch{}finally{S.fundingTimer=setTimeout(()=>void refreshFunding(),30000)}}async function scheduleCachedRefreshes(){await Promise.all([...S.live.entries()].map(([id,result])=>scheduleEntryRefresh(id,result)))}async function refresh(entryIds){const r=await window.fleetRentalBot.refreshWatchlist(entryIds);for(const result of r)S.live.set(result.id,result);render();await Promise.all(r.map(result=>scheduleEntryRefresh(result.id,result)))}
+function scheduleCountdownRender(){clearTimeout(S.countdownTimer);S.countdownTimer=setTimeout(()=>{render();scheduleCountdownRender()},60000)}async function scheduleEntryRefresh(id,result=S.live.get(id)){clearTimeout(S.timers.get(id));const delay=result?.ok?await window.fleetRentalBot.getNextRefreshDelay([result.row.snapshot.activeRentalEndsAtMs??null]):300000;const timer=setTimeout(()=>void refresh([id]).catch(error=>{$('save-state').textContent=error.message||'Refresh unavailable';void scheduleEntryRefresh(id)}),delay);S.timers.set(id,timer)}async function refreshFunding() {
+  clearTimeout(S.fundingTimer);
+  try {
+    const settings = S.settings;
+    const items = await window.fleetRentalBot.refreshFunding();
+    if (settings !== S.settings) return;
+    for (const item of items) {
+      const result = S.live.get(item.id);
+      const entry = S.document.entries.find(candidate => candidate.id === item.id);
+      if (!result?.ok || result.source !== 'live' || result.fetchedAtMs !== item.fetchedAtMs || !entry?.enabled
+        || entry.contractAddress !== item.contractAddress || entry.requestedDurationSeconds !== item.requestedDurationSeconds
+        || entry.lcfs !== item.lcfs || entry.canSafelyOperate !== item.canSafelyOperate
+        || entry.maximumReservationBidAtlas !== item.maximumReservationBidAtlas
+        || entry.maximumRentalRateAtlasPerDay !== item.maximumRentalRateAtlasPerDay) continue;
+      result.row.funding = item.funding;
+      result.row.preflight = item.preflight;
+    }
+    render();
+  } catch {} finally {
+    S.fundingTimer = setTimeout(() => void refreshFunding(), 30000);
+  }
+}
+async function scheduleCachedRefreshes(){await Promise.all([...S.live.entries()].map(([id,result])=>scheduleEntryRefresh(id,result)))}async function refresh(entryIds){const r=await window.fleetRentalBot.refreshWatchlist(entryIds);for(const result of r)S.live.set(result.id,result);render();await Promise.all(r.map(result=>scheduleEntryRefresh(result.id,result)))}
 function columns(){const p=$('column-options');p.replaceChildren();const choices=tableColumnOrder.map(id=>S.columns.find(c=>c.id===id)).filter(Boolean);for(const c of tableColumnOrder.filter(id=>choices.some(choice=>choice.id===id)).map(id=>choices.find(choice=>choice.id===id))){const l=el('label'),x=input('checkbox');x.checked=S.document.visibleColumns.includes(c.id);x.onchange=async()=>{const set=new Set(S.document.visibleColumns);x.checked?set.add(c.id):set.delete(c.id);S.document.visibleColumns=[...set];await save();render()};l.append(x,document.createTextNode(c.label));p.append(l)}}
 async function openReview(e){const d=$('review-dialog');d.dataset.entryId=e.id;$('review-title').textContent=e.label||'Reservation Review';$('review-loading').hidden=false;$('review-content').hidden=true;$('review-blocked').hidden=true;d.showModal();try{const r=await window.fleetRentalBot.prepareReservationReview(e.id);$('review-loading').hidden=true;if(r.kind==='blocked'){$('review-blocked').textContent=`${r.plan.reason}: ${r.plan.detail}`;$('review-blocked').hidden=false;return}$('review-summary').textContent=`${r.plan.action.toUpperCase()} · ${n(r.plan.bidAtlas)} ATLAS · ${n(r.plan.requestedDurationSeconds/86400)} days`;const list=$('review-instructions');list.replaceChildren();for(const i of r.instructions){const c=el('div',`#${i.index+1} ${i.programAddress} · ${i.dataBytes} bytes`,'instruction');for(const a of i.accounts)c.append(el('code',`${a.address} · role ${a.role}`));list.append(c)}$('review-content').hidden=false}catch(err){$('review-loading').hidden=true;$('review-blocked').textContent=err.message;$('review-blocked').hidden=false}}
 async function simulate(){const r=await window.fleetRentalBot.simulateReservation($('review-dialog').dataset.entryId);const box=$('simulation-result');box.hidden=false;if(r.kind==='blocked'){$('simulation-status').textContent='BLOCKED';$('simulation-logs').textContent=r.plan.detail;return}$('simulation-status').textContent=r.simulation.ok?'SIMULATION PASSED':'SIMULATION FAILED';$('simulation-units').textContent=`${n(r.simulation.unitsConsumed,0)} compute units`;$('simulation-logs').textContent=[r.simulation.error,...r.simulation.logs].filter(Boolean).join('\n')}

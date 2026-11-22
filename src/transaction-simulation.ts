@@ -43,17 +43,23 @@ function errorText(error: unknown): string | null {
   try { return JSON.stringify(error); } catch { return String(error); }
 }
 
-export async function simulateUnsignedInstructions(input: UnsignedSimulationInput): Promise<UnsignedSimulationResult> {
-  const wallet = address(requireSolanaAddress(input.walletAddress, 'walletAddress'));
-  const lifetime = await input.getLatestBlockhash();
+export function compileUnsignedInstructions(
+  instructions: Instruction[], walletAddress: string, lifetime: { blockhash: string; lastValidBlockHeight: bigint },
+) {
+  const wallet = address(requireSolanaAddress(walletAddress, 'walletAddress'));
   const emptyMessage = createTransactionMessage({ version: 0 });
   const feePayerMessage = setTransactionMessageFeePayer(wallet, emptyMessage);
   const lifetimeMessage = setTransactionMessageLifetimeUsingBlockhash({
     blockhash: blockhash(lifetime.blockhash),
     lastValidBlockHeight: lifetime.lastValidBlockHeight,
   }, feePayerMessage);
-  const instructionMessage = appendTransactionMessageInstructions(input.instructions, lifetimeMessage);
-  const wire = getBase64EncodedWireTransaction(compileTransaction(instructionMessage));
+  return compileTransaction(appendTransactionMessageInstructions(instructions, lifetimeMessage));
+}
+
+export async function simulateUnsignedInstructions(input: UnsignedSimulationInput): Promise<UnsignedSimulationResult> {
+  requireSolanaAddress(input.walletAddress, 'walletAddress');
+  const lifetime = await input.getLatestBlockhash();
+  const wire = getBase64EncodedWireTransaction(compileUnsignedInstructions(input.instructions, input.walletAddress, lifetime));
   const response = await input.simulateWire(wire, {
     encoding: 'base64', sigVerify: false, commitment: 'confirmed',
   });

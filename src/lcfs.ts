@@ -10,6 +10,7 @@ import {
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
+  type Address,
   type Instruction,
   type TransactionSigner,
 } from '@solana/kit';
@@ -555,6 +556,27 @@ export function normalizeInstructionSigners(instructions: Instruction[], signer:
   }));
 }
 
+export function lcfsTipLamports(settings: Pick<AppSettings, 'heliusSenderTipSol'>): bigint {
+  return BigInt(Math.max(1, Math.round(settings.heliusSenderTipSol * LAMPORTS_PER_SOL)));
+}
+
+export function lcfsFeeInstructions(settings: AppSettings, wallet: Address): Instruction[] {
+  const computeBudget: Instruction = {
+    programAddress: address(COMPUTE_BUDGET_PROGRAM),
+    data: u64InstructionData(3, BigInt(settings.transactionPriorityFeeMicroLamports), 1),
+  };
+  const tipLamports = lcfsTipLamports(settings);
+  const tip: Instruction = {
+    programAddress: address(SYSTEM_PROGRAM),
+    accounts: [
+      { address: wallet, role: AccountRole.WRITABLE_SIGNER },
+      { address: address(HELIUS_TIP_ACCOUNT), role: AccountRole.WRITABLE },
+    ],
+    data: u64InstructionData(2, tipLamports, 4),
+  };
+  return [computeBudget, tip];
+}
+
 async function prepareLcfsTransaction(
   instructions: Instruction[],
   settings: AppSettings,
@@ -567,26 +589,13 @@ async function prepareLcfsTransaction(
     if (settings.walletAddress && signer.address !== settings.walletAddress) throw new Error('Signing wallet does not match configured wallet');
     const rpc = createSolanaRpc(settings.rpcUrl);
     const lifetime = (await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()).value;
-    const computeBudget: Instruction = {
-      programAddress: address(COMPUTE_BUDGET_PROGRAM),
-      data: u64InstructionData(3, BigInt(settings.transactionPriorityFeeMicroLamports), 1),
-    };
-    const tipLamports = BigInt(Math.max(1, Math.round(settings.heliusSenderTipSol * LAMPORTS_PER_SOL)));
-    const tip: Instruction = {
-      programAddress: address(SYSTEM_PROGRAM),
-      accounts: [
-        { address: signer.address, role: AccountRole.WRITABLE_SIGNER },
-        { address: address(HELIUS_TIP_ACCOUNT), role: AccountRole.WRITABLE },
-      ],
-      data: u64InstructionData(2, tipLamports, 4),
-    };
     const emptyMessage = createTransactionMessage({ version: 0 });
     const feePayerMessage = setTransactionMessageFeePayerSigner(signer, emptyMessage);
     const lifetimeMessage = setTransactionMessageLifetimeUsingBlockhash({
       blockhash: blockhash(lifetime.blockhash), lastValidBlockHeight: lifetime.lastValidBlockHeight,
     }, feePayerMessage);
     const normalizedInstructions = normalizeInstructionSigners(instructions, signer);
-    const withInstructions = appendTransactionMessageInstructions([computeBudget, tip, ...normalizedInstructions], lifetimeMessage);
+    const withInstructions = appendTransactionMessageInstructions([...lcfsFeeInstructions(settings, signer.address), ...normalizedInstructions], lifetimeMessage);
     return getBase64EncodedWireTransaction(await signTransactionMessageWithSigners(withInstructions));
   } finally {
     secret.fill(0);

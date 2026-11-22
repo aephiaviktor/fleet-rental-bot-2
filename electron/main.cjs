@@ -677,18 +677,26 @@ ipcMain.handle('history:load', async (_event, refresh = false) => {
 
 ipcMain.handle('funding:refresh', async () => {
   await requireAephiaAccess();
-  const [{ loadWatchlist }, { loadCachedRows }, { loadAtlasBalance, estimateFunding }] = await Promise.all([
-    domainModule('watchlist-store'), domainModule('fleet-database'), domainModule('funding'),
+  const [{ loadWatchlist }, { loadCachedRows }, { loadAtlasBalance, estimateFunding }, { collectReservationPreflights }] = await Promise.all([
+    domainModule('watchlist-store'), domainModule('fleet-database'), domainModule('funding'), domainModule('reservation-preflight'),
   ]);
   const [watchlist, settings] = await Promise.all([loadWatchlist(watchlistPath()), loadRuntimeSettings()]);
   const available = await loadAtlasBalance(settings.walletAddress, settings.rpcUrl);
-  const cached = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance).map(item => [item.row.entry.id, item.row]));
-  return watchlist.entries.filter(entry => entry.enabled).flatMap(entry => {
-    const row = cached.get(entry.id);
-    if (!row || row.entry.contractAddress !== entry.contractAddress) return [];
-    return [{ id: entry.id, contractAddress: entry.contractAddress, requestedDurationSeconds: entry.requestedDurationSeconds,
-      lcfs: entry.lcfs, maximumReservationBidAtlas: entry.maximumReservationBidAtlas,
-      maximumRentalRateAtlasPerDay: entry.maximumRentalRateAtlasPerDay, funding: estimateFunding(entry, row.snapshot, available) }];
+  const cached = new Map(loadCachedRows(sharedDatabasePath(), INSTANCE.instance).map(item => [item.row.entry.id, item]));
+  const rows = watchlist.entries.filter(entry => entry.enabled).flatMap(entry => {
+    const item = cached.get(entry.id);
+    if (!item || item.row.entry.contractAddress !== entry.contractAddress) return [];
+    return [{ row: { ...item.row, entry }, fetchedAtMs: item.fetchedAtMs }];
+  });
+  const preflights = settings.hotWalletSecret ? collectReservationPreflights(rows.map(item => item.row), settings) : new Map();
+  return rows.map(({ row, fetchedAtMs }) => {
+    const { entry, snapshot } = row;
+    return {
+      id: entry.id, contractAddress: entry.contractAddress, requestedDurationSeconds: entry.requestedDurationSeconds,
+      lcfs: entry.lcfs, canSafelyOperate: entry.canSafelyOperate, maximumReservationBidAtlas: entry.maximumReservationBidAtlas,
+      maximumRentalRateAtlasPerDay: entry.maximumRentalRateAtlasPerDay, fetchedAtMs,
+      funding: estimateFunding(entry, snapshot, available), preflight: preflights.get(entry.id) ?? null,
+    };
   });
 });
 

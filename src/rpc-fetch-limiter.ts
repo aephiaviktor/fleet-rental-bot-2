@@ -10,6 +10,12 @@ interface LimitedFetchDependencies {
 }
 
 const rpcPriority = new AsyncLocalStorage<'normal' | 'urgent'>();
+const rpcDeadline = new AsyncLocalStorage<AbortSignal>();
+
+/** Bound background work, including SDK reads without a caller-provided signal. */
+export function withRpcDeadline<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  return rpcDeadline.run(signal, operation);
+}
 
 export async function withUrgentRpcPriority<T>(databasePath: string, operation: () => Promise<T>): Promise<T> {
   deferNormalRpcUntil(databasePath, Date.now() + 30_000);
@@ -61,6 +67,9 @@ export function createLimitedRpcFetch(
   return async (input, init) => {
     const parsedMethod = rpcMethod(init);
     if (!parsedMethod) return fetchImplementation(input, init);
+    const deadline = rpcDeadline.getStore();
+    const signal = deadline && init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline ?? init?.signal;
+    if (deadline) init = { ...init, signal };
     const method = safeRpcMethod(parsedMethod);
     const provider = rpcProvider(input);
     const mayRetry = method !== 'sendTransaction';
@@ -69,6 +78,7 @@ export function createLimitedRpcFetch(
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       for (;;) {
+        signal?.throwIfAborted();
         const claim = tryClaimRpcSlot(databasePath, now(), rpcPriority.getStore() === 'urgent');
         if (claim.claimed) break;
         await sleep(Math.max(1, claim.waitMs));

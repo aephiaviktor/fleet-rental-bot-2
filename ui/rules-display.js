@@ -1,5 +1,15 @@
 /* Shared pure display helpers, also exercised by the Node regression tests. */
 globalThis.RulesDisplay = {
+  preflightLabel(status) {
+    switch (status) {
+      case 'low-sol': return 'Low SOL';
+      case 'missing-account': return 'Missing account';
+      case 'authority': return 'Check authority';
+      case 'simulation-failed': return 'Simulation failed';
+      case 'unavailable': return 'Simulation unavailable';
+      default: return null;
+    }
+  },
   fundingLabel(estimate) {
     if (estimate?.status === 'bid-limit') return 'Bid limit';
     if (estimate?.status === 'rate-limit') return 'Rate limit';

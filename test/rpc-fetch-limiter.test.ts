@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createLimitedRpcFetch, withUrgentRpcPriority } from '../src/rpc-fetch-limiter.js';
+import { createLimitedRpcFetch, withRpcDeadline, withUrgentRpcPriority } from '../src/rpc-fetch-limiter.js';
 import { deferNormalRpcUntil, readRpcUsageDay } from '../src/fleet-database.js';
 
 async function temporaryDatabase(): Promise<{ path: string; cleanup: () => Promise<void> }> {
@@ -109,6 +109,26 @@ test('usage telemetry stores only safe dimensions and validates UTC dates', asyn
       utcDate: '2026-09-15', available: false, availableDates: ['2026-09-16'], totalRequests: null,
       totalRetries: null, rows: [], lastUpdatedAt: null,
     });
+  } finally {
+    await database.cleanup();
+  }
+});
+
+
+test('an expired background check cannot consume an RPC slot while queued', async () => {
+  const database = await temporaryDatabase();
+  const deadline = new AbortController();
+  let requests = 0;
+  try {
+    deferNormalRpcUntil(database.path, Date.now() + 10_000);
+    const limitedFetch = createLimitedRpcFetch(database.path, 'MUD', async () => {
+      requests++;
+      return new Response('{}');
+    }, { sleep: async () => { deadline.abort(); } });
+    await assert.rejects(withRpcDeadline(deadline.signal, () => limitedFetch('https://rpc.example.test', {
+      method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [] }),
+    })), { name: 'AbortError' });
+    assert.equal(requests, 0);
   } finally {
     await database.cleanup();
   }

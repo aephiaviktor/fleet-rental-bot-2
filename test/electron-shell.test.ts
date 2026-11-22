@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 
-test('Electron shell keeps renderer sandboxed and limits automated signing to LCFS', async () => {
+test('Electron shell keeps renderer sandboxed and runs both automated bid strategies in the main process', async () => {
   const main = await readFile('electron/main.cjs', 'utf8');
   assert.match(main, /contextIsolation:\s*true/);
   assert.match(main, /nodeIntegration:\s*false/);
@@ -15,6 +15,7 @@ test('Electron shell keeps renderer sandboxed and limits automated signing to LC
   assert.match(main, /const endKey = Number\.isFinite\(end\).+no-rental/);
   assert.match(main, /blocked:\$\{entry\.id\}:\$\{endKey\}:\$\{nowMs\}/);
   assert.match(main, /executeLcfsAttempt/);
+  assert.match(main, /executeBonusBid/);
   assert.match(main, /safeStorage\.encryptString/);
   assert.match(main, /safeStorage\.decryptString/);
   assert.match(main, /configureInstance/);
@@ -141,7 +142,7 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(preload, /access:unlock/);
   assert.match(access, /https:\/\/api\.aephia\.com\/token\/validate/);
   assert.match(main, /requireAephiaAccess/);
-  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'rpc-usage:day', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate', 'lcfs:state']) {
+  for (const channel of ['watchlist:load', 'watchlist:cached', 'watchlist:save', 'settings:load', 'settings:save', 'settings:remove-hot-wallet', 'profile:faction', 'rpc-limiter:status', 'rpc-usage:day', 'refresh:next-delay', 'updates:check', 'updates:download-and-restart', 'watchlist:refresh', 'reservation:review', 'reservation:simulate', 'lcfs:state', 'bonus:load', 'bonus:save']) {
     const start = main.indexOf(`ipcMain.handle('${channel}'`);
     assert.notEqual(start, -1, `${channel} handler must exist`);
     assert.match(main.slice(start, start + 220), /await requireAephiaAccess\(\)/, `${channel} must fail closed behind Aephia access`);
@@ -151,12 +152,12 @@ test('Aephia access is a non-dismissible fail-closed application gate', async ()
   assert.match(main, /clearLcfsTimers/);
 });
 
-test('repeat clicks toggle each column picker and ATLAS Earned closes both pickers', async () => {
+test('repeat clicks toggle each column picker and strategy and earnings close both pickers', async () => {
   const [html, renderer] = await Promise.all([readFile('ui/index.html', 'utf8'), readFile('ui/app.js', 'utf8')]);
   assert.match(html, /id="reservation-columns" class="nav-columns"[^>]*hidden/);
   assert.match(html, /id="history-columns" class="nav-columns" hidden/);
   assert.match(html, /id="earnings-panel"[^>]* hidden/);
-  const ids = ['open-reservations', 'open-history', 'open-earnings', 'reservations-panel', 'history-panel', 'earnings-panel', 'reservation-columns', 'history-columns'];
+  const ids = ['open-reservations', 'open-history', 'open-earnings', 'open-bonus', 'reservations-panel', 'history-panel', 'earnings-panel', 'bonus-panel', 'reservation-columns', 'history-columns'];
   const elements = new Map(ids.map(id => [id, { hidden: true, classList: { toggle() {} } }]));
   const source = renderer.slice(renderer.indexOf('const mainPanels ='), renderer.indexOf('async function showRentalHistory'));
   const select = runInNewContext(`${source}\nselectMainPanel;`, { $: (id: string) => elements.get(id) });
@@ -170,9 +171,12 @@ test('repeat clicks toggle each column picker and ATLAS Earned closes both picke
   select('open-history');
   select('open-history');
   assert.equal(elements.get('history-columns')!.hidden, false);
+  select('open-bonus');
+  assert.equal(elements.get('bonus-panel')!.hidden, false);
+  assert.equal(elements.get('history-columns')!.hidden, true);
   select('open-earnings');
   assert.equal(elements.get('earnings-panel')!.hidden, false);
-  for (const id of ['reservation-columns', 'history-columns', 'history-panel', 'reservations-panel']) {
+  for (const id of ['reservation-columns', 'history-columns', 'history-panel', 'reservations-panel', 'bonus-panel']) {
     assert.equal(elements.get(id)!.hidden, true);
   }
 });

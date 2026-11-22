@@ -65,3 +65,11 @@
   text-align: left;
 }
 .earnings-transaction:hover { text-decoration: underline; }
+
+.bonus-toolbar { flex-wrap: wrap; }
+.bonus-toolbar label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.bonus-toolbar input, .bonus-table input[type="number"] { width: 8.5rem; }
+.bonus-table td { vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bonus-table td:nth-child(n+2):nth-child(-n+6),
+.bonus-table th:nth-child(n+2):nth-child(-n+6) { text-align: right; }
+.bonus-table :is(td, th):nth-child(9) { text-align: center; }

@@ -582,6 +582,14 @@ async function prepareLcfsTransaction(
   settings: AppSettings,
   hotWalletSecret: string,
 ): Promise<string> {
+  return (await prepareSenderTransaction(instructions, settings, hotWalletSecret)).wire;
+}
+
+export async function prepareSenderTransaction(
+  instructions: Instruction[],
+  settings: AppSettings,
+  hotWalletSecret: string,
+): Promise<{ wire: string; lastValidBlockHeight: bigint }> {
   const secret = decodeSecret(hotWalletSecret);
   try {
     if (secret.length !== 64) throw new Error('Hot wallet secret must contain exactly 64 bytes');
@@ -596,13 +604,16 @@ async function prepareLcfsTransaction(
     }, feePayerMessage);
     const normalizedInstructions = normalizeInstructionSigners(instructions, signer);
     const withInstructions = appendTransactionMessageInstructions([...lcfsFeeInstructions(settings, signer.address), ...normalizedInstructions], lifetimeMessage);
-    return getBase64EncodedWireTransaction(await signTransactionMessageWithSigners(withInstructions));
+    return {
+      wire: getBase64EncodedWireTransaction(await signTransactionMessageWithSigners(withInstructions)),
+      lastValidBlockHeight: lifetime.lastValidBlockHeight,
+    };
   } finally {
     secret.fill(0);
   }
 }
 
-async function submitPreparedToHelius(wireTransaction: string): Promise<string> {
+export async function submitPreparedToHelius(wireTransaction: string): Promise<string> {
   const response = await fetch(HELIUS_SENDER_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -16,6 +16,10 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock({ instance: INSTANCE
 let mainWindow = null;
 const lcfsTimers = new Map();
 let lcfsStateWrite = Promise.resolve();
+let bonusTimer = null;
+let bonusPolling = false;
+let bonusGeneration = 0;
+let bonusStatus = { profile: '', rows: {}, message: '' };
 let aephiaAccessState = { status: 'unknown', message: 'Aephia API key validation required.', checkedAt: 0, tokenKey: '' };
 let aephiaValidationTimer = null;
 const LATEST_RELEASE_URL = 'https://api.github.com/repos/aephiaviktor/fleet-rental-bot-2/releases/latest';
@@ -217,6 +221,89 @@ function emitLcfsStatus(entryId, status, detail) {
 function clearLcfsTimers() {
   for (const timer of lcfsTimers.values()) clearTimeout(timer);
   lcfsTimers.clear();
+}
+
+function scheduleBonusPoll(delayMs = 0) {
+  clearTimeout(bonusTimer);
+  if (!bonusPolling && mainWindow && !mainWindow.isDestroyed()) {
+    bonusTimer = setTimeout(() => void pollBonusStrategy(), delayMs);
+  }
+}
+
+function refreshBonusStrategy() {
+  bonusGeneration++;
+  scheduleBonusPoll();
+}
+
+async function pollBonusStrategy() {
+  bonusPolling = true;
+  const generation = bonusGeneration;
+  const current = () => generation === bonusGeneration && mainWindow && !mainWindow.isDestroyed();
+  const status = { profile: '', rows: {}, message: '' };
+  const publish = () => {
+    if (!current()) return;
+    bonusStatus = { ...status, rows: { ...status.rows } };
+    mainWindow.webContents.send('bonus:status', bonusStatus);
+  };
+  try {
+    const [{ loadBonusSettings }, { loadWatchlist }, settings] = await Promise.all([
+      domainModule('bonus-store'), domainModule('watchlist-store'), loadRuntimeSettings(),
+    ]);
+    const directory = app.getPath('userData');
+    status.profile = settings.playerProfile;
+    if (!settings.playerProfile) return;
+    const [strategy, watchlist] = await Promise.all([
+      loadBonusSettings(directory, settings.playerProfile), loadWatchlist(watchlistPath()),
+    ]);
+    const armed = new Map(strategy.rules.filter(rule => rule.fcfs).map(rule => [rule.contractAddress, rule]));
+    const entries = watchlist.entries.filter(entry => armed.has(entry.contractAddress) && entry.enabled && entry.canSafelyOperate);
+    if (!entries.length || !current()) return;
+    if (!settings.useHeliusSender || !settings.hotWalletSecret || !settings.rpcUrl) {
+      status.message = 'To run FCFS, configure the signing wallet and RPC and enable Helius Sender in Settings.';
+      return;
+    }
+    await requireAephiaAccess();
+    const [{ withRpcDeadline }, { pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid }] = await Promise.all([
+      domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'),
+    ]);
+    if (!current()) return;
+    const fleets = await withRpcDeadline(AbortSignal.timeout(12_000), () => pollBonusFleets(entries.map(entry => entry.contractAddress), settings.rpcUrl));
+    const work = entries.map(entry => ({ entry, fleet: fleets.get(entry.contractAddress), rule: armed.get(entry.contractAddress) }));
+    work.sort((a, b) => (a.fleet?.snapshot.minimumDurationSeconds ?? Infinity) - (b.fleet?.snapshot.minimumDurationSeconds ?? Infinity));
+    for (const { entry, fleet, rule } of work) {
+      if (!current()) break;
+      const contract = entry.contractAddress;
+      if (!fleet) {
+        status.rows[contract] = { status: 'warning', detail: 'Live rental state unavailable' };
+        continue;
+      }
+      const { snapshot } = fleet;
+      const nowMs = fleet.raw.nowSeconds * 1_000;
+      const plan = planBonusReservation(entry, rule, snapshot, ourBonusDefender(fleet.raw, settings), nowMs);
+      const row = {
+        rate: snapshot.rentalRateAtlasPerDay, minimumSeconds: snapshot.minimumDurationSeconds,
+        endsAtMs: snapshot.activeRentalEndsAtMs, bidAtlas: plan.kind === 'ready' ? plan.bidAtlas : null,
+        requiredAtlas: plan.kind === 'ready' ? plan.requiredAtlas : null,
+      };
+      try {
+        const outcome = await withRpcDeadline(AbortSignal.timeout(15_000), () => executeBonusBid(
+          entry, rule, fleet, settings, directory, historyDatabasePath(), async () => {
+            await requireAephiaAccess();
+            return Boolean(current());
+          },
+        ));
+        status.rows[contract] = { ...row, ...outcome };
+      } catch {
+        status.rows[contract] = { ...row, status: 'warning', detail: 'FCFS checks unavailable · retrying' };
+      }
+    }
+  } catch {
+    status.message = 'Bonus Strategy is waiting for valid access and fresh rental data.';
+  } finally {
+    publish();
+    bonusPolling = false;
+    scheduleBonusPoll(current() ? 10_000 : 0);
+  }
 }
 
 async function scheduleLcfsAttempts(watchlist, settings, results, refreshedEntryIds = null) {
@@ -463,6 +550,7 @@ function createWindow() {
   void mainWindow.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
   mainWindow.webContents.once('did-finish-load', () => { void confirmUpdateReadiness(); });
   mainWindow.on('closed', () => { mainWindow = null; });
+  refreshBonusStrategy();
 }
 
 ipcMain.handle('app:get-bootstrap', async () => ({
@@ -529,7 +617,29 @@ ipcMain.handle('watchlist:save', async (_event, document) => {
   await requireAephiaAccess();
   const { saveWatchlist } = await domainModule('watchlist-store');
   await saveWatchlist(watchlistPath(), document);
+  refreshBonusStrategy();
   return { ok: true };
+});
+
+ipcMain.handle('bonus:load', async event => {
+  await requireAephiaAccess();
+  requireTrustedUpdaterRenderer(event);
+  const [{ loadBonusSettings }, settings] = await Promise.all([domainModule('bonus-store'), loadRuntimeSettings()]);
+  const profile = settings.playerProfile;
+  return {
+    profile, configuration: await loadBonusSettings(app.getPath('userData'), profile),
+    status: bonusStatus.profile === profile ? bonusStatus : null,
+  };
+});
+
+ipcMain.handle('bonus:save', async (event, profile, configuration) => {
+  await requireAephiaAccess();
+  requireTrustedUpdaterRenderer(event);
+  const [{ saveBonusSettings }, settings] = await Promise.all([domainModule('bonus-store'), loadRuntimeSettings()]);
+  if (!profile || profile !== settings.playerProfile) throw new Error('The active Player Profile changed. Reload Bonus Strategy.');
+  const saved = await saveBonusSettings(app.getPath('userData'), profile, configuration);
+  refreshBonusStrategy();
+  return saved;
 });
 
 ipcMain.handle('settings:load', async () => {
@@ -569,6 +679,7 @@ ipcMain.handle('settings:save', async (_event, settings) => {
   const nextSettings = { ...current, ...settings, useRpcLimiter: false, aephiaApiKey: '', walletAddress: nextWallet ? getHotWalletAddressFromSecret(nextWallet) : current.walletAddress };
   await saveSettings(settingsPath(), nextSettings);
   setRpcRequestsPerSecond(sharedDatabasePath(), nextSettings.rpcRequestsPerSecond);
+  refreshBonusStrategy();
   const next = { ...current, aephiaApiKey: replacementKey || current.aephiaApiKey, hotWalletSecret: nextWallet };
   return { ok: true, hotWalletAddress: hotWalletAddress(next), secureSettingsStatus: secureSettingsStatus(next) };
 });
@@ -579,6 +690,7 @@ ipcMain.handle('settings:remove-hot-wallet', async () => {
   const current = await loadSettingsWithSecrets();
   await saveSettings(settingsPath(), { ...current, aephiaApiKey: '', walletAddress: '' });
   await writeSecureValues({ hotWalletSecret: '' });
+  refreshBonusStrategy();
   return { ok: true, hotWalletAddress: '', secureSettingsStatus: { hotWalletSecret: false } };
 });
 
@@ -854,6 +966,7 @@ if (!hasSingleInstanceLock) {
 
   app.on('window-all-closed', () => {
     clearLcfsTimers();
+    refreshBonusStrategy();
     if (aephiaValidationTimer) clearInterval(aephiaValidationTimer);
     aephiaValidationTimer = null;
     if (process.platform !== 'darwin') app.quit();

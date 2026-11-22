@@ -265,7 +265,7 @@ async function pollBonusStrategy() {
     }
     await requireAephiaAccess();
     const [{ withRpcDeadline }, { resolveBonusFaction, pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid },
-      { bonusDemandContext, verifyBonusDemand, MINIMUM_DEMAND_PROFILES }] = await Promise.all([
+      { bonusDemandContext, verifyBonusDemand, MINIMUM_DEMAND_WALLETS }] = await Promise.all([
       domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'), domainModule('bonus-demand'),
     ]);
     if (!current()) return;
@@ -304,7 +304,7 @@ async function pollBonusStrategy() {
           continue;
         }
         const demand = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, bonusDemandContext(fleet.raw)));
-        if (demand == null || demand < MINIMUM_DEMAND_PROFILES) {
+        if (demand == null || demand < MINIMUM_DEMAND_WALLETS) {
           status.rows[contract] = { ...row, status: 'waiting', detail: 'FCFS paused until the latest period meets the demand rule' };
           continue;
         }
@@ -693,17 +693,17 @@ ipcMain.handle('bonus:demand', async (event, profile, contracts) => {
   if (profile !== settings.playerProfile || cache?.rpcUrl !== settings.rpcUrl || !cache.report) return [];
   if (!Array.isArray(contracts) || contracts.length > 4) throw new Error('Invalid demand check request');
   const lookup = new Map(cache.report.rows.map(row => [row.contractAddress, row.demand]));
-  const [{ withRpcDeadline }, { verifyBonusDemand, MINIMUM_DEMAND_PROFILES }] = await Promise.all([
+  const [{ withRpcDeadline }, { verifyBonusDemand, MINIMUM_DEMAND_WALLETS }] = await Promise.all([
     domainModule('rpc-fetch-limiter'), domainModule('bonus-demand'),
   ]);
   return Promise.all([...new Set(contracts)].filter(contract => lookup.has(contract)).map(async contract => {
     const context = lookup.get(contract);
-    if (!context) return { contract, revision: null, profiles: null, qualifies: false };
-    let profiles;
+    if (!context) return { contract, revision: null, wallets: null, qualifies: false };
+    let wallets;
     try {
-      profiles = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, context));
-    } catch { profiles = null; }
-    return { contract, revision: context.revision, profiles, qualifies: profiles >= MINIMUM_DEMAND_PROFILES };
+      wallets = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, context));
+    } catch { wallets = null; }
+    return { contract, revision: context.revision, wallets, qualifies: wallets >= MINIMUM_DEMAND_WALLETS };
   }));
 });
 

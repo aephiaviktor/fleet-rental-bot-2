@@ -332,7 +332,7 @@ function renderBonusStrategy(force = false) {
   }).filter(({ rate }) => rate >= configuration.minimumRateAtlasPerDay);
   if (scan && market.fetchedAtMs != null) {
     const checked = candidates.filter(row => scan.demand.has(row.contractAddress)).length;
-    const unknown = candidates.filter(row => scan.demand.get(row.contractAddress)?.profiles === null).length;
+    const unknown = candidates.filter(row => scan.demand.get(row.contractAddress)?.wallets === null).length;
     const count = `${rows.length} qualifying ${market.faction} fleets · ${checked}/${candidates.length} demand checks`;
     marketNote.textContent = [market.error, count, unknown ? `${unknown} without verified history` : ''].filter(Boolean).join(' · ');
   } else if (market?.error) marketNote.textContent = market.error;
@@ -401,7 +401,7 @@ async function scanBonusMarket(refresh = false, restart = false) {
     const demand = new Map();
     for (const row of report.rows) {
       const proof = previous?.get(row.contractAddress);
-      if (proof?.revision === row.demand?.revision && proof?.profiles != null) demand.set(row.contractAddress, proof);
+      if (proof?.revision === row.demand?.revision && proof?.wallets != null) demand.set(row.contractAddress, proof);
     }
     bonusMarket = { rpcUrl, profile, report, demand };
     renderBonusStrategy();
@@ -414,7 +414,7 @@ async function scanBonusMarket(refresh = false, restart = false) {
       if (!current()) return;
       for (const proof of proofs) {
         const prior = demand.get(proof.contract);
-        if (proof.profiles !== null || prior?.revision !== proof.revision) demand.set(proof.contract, proof);
+        if (proof.wallets !== null || prior?.revision !== proof.revision) demand.set(proof.contract, proof);
       }
       renderBonusStrategy();
     }

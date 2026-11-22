@@ -1,8 +1,11 @@
+import { createRequire } from 'node:module';
 import { address, createSolanaRpc } from '@solana/kit';
 import type { ContractSnapshot } from '@sly-rentals/core';
-import { historyEvidence, type HistoryEvidence } from './history-backfill.js';
+import type { AuditEvent, RentalClosedEvent } from '@sly-rentals/core/audit';
+import { NEXT_GEN_SRSLY_PROGRAM_ID } from './model.js';
 
-export const MINIMUM_DEMAND_PROFILES = 2;
+const { parseAnchorEvents } = createRequire(import.meta.url)('@sly-rentals/core/audit') as typeof import('@sly-rentals/core/audit');
+export const MINIMUM_DEMAND_WALLETS = 2;
 const FINAL_MINUTE_SECONDS = 60;
 
 export interface BonusDemandContext {
@@ -22,21 +25,22 @@ export function bonusDemandContext(snapshot: ContractSnapshot): BonusDemandConte
 }
 
 /** Consume events in reverse execution order. Undefined means more history is needed. */
-export function lastReservationDemand(contract: string, evidence: Iterable<HistoryEvidence>): number | null | undefined {
-  let close: HistoryEvidence | undefined;
+export function lastReservationDemand(contract: string, evidence: Iterable<{ event: AuditEvent; at: number }>): number | null | undefined {
+  let close: { event: RentalClosedEvent; at: number } | undefined;
   let revisedEnd: number | undefined;
-  const bids: { at: number; profile: string }[] = [];
+  const bids: { at: number; wallet: string }[] = [];
   for (const item of evidence) {
     const event = item.event;
-    if (event.contract !== contract) continue;
+    if (!('contract' in event) || event.contract !== contract) continue;
     if (event.type === 'ContractCreated' || event.type === 'ContractClosed') return close ? undefined : null;
     if (!close) {
-      if (event.type === 'RentalClosed') close = item;
+      if (event.type === 'RentalClosed') close = { event, at: item.at };
       continue;
     }
-    if (event.type === 'ReservationPlaced' && item.reservationProfile) {
-      bids.push({ at: item.at / 1_000, profile: item.reservationProfile });
+    if (event.type === 'ReservationPlaced') {
+      bids.push({ at: item.at / 1_000, wallet: event.borrower });
     }
+    if (event.type !== 'RentalCancelled' && event.type !== 'RentalAccepted') continue;
     if (event.rentalState !== close.event.rentalState || event.borrower !== close.event.borrower) continue;
     if (event.type === 'RentalCancelled') revisedEnd ??= Number(event.newEndTime);
     if (event.type === 'RentalAccepted') {
@@ -45,7 +49,7 @@ export function lastReservationDemand(contract: string, evidence: Iterable<Histo
       if (start >= close.at / 1_000 || (Number(event.endTime) > close.at / 1_000 && revisedEnd === undefined)) continue;
       if (!Number.isSafeInteger(end) || end <= start || end > close.at / 1_000) return undefined;
       const lowerBound = Math.max(start, end - FINAL_MINUTE_SECONDS);
-      return new Set(bids.filter(bid => bid.at >= lowerBound && bid.at < end).map(bid => bid.profile)).size;
+      return new Set(bids.filter(bid => bid.at >= lowerBound && bid.at < end).map(bid => bid.wallet)).size;
     }
   }
   return undefined;
@@ -54,7 +58,7 @@ export function lastReservationDemand(contract: string, evidence: Iterable<Histo
 async function readLastReservationDemand(rpcUrl: string, context: BonusDemandContext): Promise<number | null> {
   const rpc = createSolanaRpc(rpcUrl);
   const contract = address(context.contractAddress);
-  const evidence: HistoryEvidence[] = [];
+  const evidence: { event: AuditEvent; at: number }[] = [];
   let before: Parameters<typeof rpc.getTransaction>[0] | undefined;
   for (let page = 0; page < 6; page += 1) {
     const signatures = await rpc.getSignaturesForAddress(contract, { limit: 100, commitment: 'finalized', before }).send();
@@ -64,9 +68,9 @@ async function readLastReservationDemand(rpcUrl: string, context: BonusDemandCon
       const tx = await rpc.getTransaction(item.signature, { encoding: 'json', commitment: 'finalized', maxSupportedTransactionVersion: 0 }).send();
       const blockTime = tx?.blockTime ?? item.blockTime;
       if (!tx || blockTime == null) throw new Error('Historical transaction or block time unavailable');
-      // The typed RPC client returns bigint block time, and the shared decoder expects seconds as a number.
-      const events = historyEvidence({ ...tx, blockTime: Number(blockTime) }, item.signature);
-      evidence.push(...events.reverse());
+      if (tx.meta?.err !== null) continue;
+      const events = parseAnchorEvents(tx.meta.logMessages ?? [], NEXT_GEN_SRSLY_PROGRAM_ID, tx.slot, item.signature);
+      evidence.push(...events.reverse().map(event => ({ event, at: Number(blockTime) * 1_000 })));
       const count = lastReservationDemand(context.contractAddress, evidence);
       if (count !== undefined) return count;
     }

@@ -155,10 +155,9 @@ export interface BonusMarketFleet {
   fleetName: string;
   rate: number;
   minimumSeconds: number;
-  endsAtMs: number | null;
+  endsAtMs: number;
   bidAtlas: number | null;
-  stateKnown: boolean;
-  demand: BonusDemandContext | null;
+  demand: BonusDemandContext;
 }
 
 const FLEET_DISCRIMINATOR = createHash('sha256').update('account:Fleet').digest().subarray(0, 8);
@@ -186,7 +185,7 @@ export async function discoverBonusMarket(rpcUrl: string, faction: BonusFaction)
   const receivedAtMs = performance.now();
   const [listed, config, nowSeconds] = await Promise.all([sdk.fetchAllContracts(rpcUrl), sdk.fetchConfig(rpcUrl), sdk.fetchChainNowSeconds(rpcUrl)]);
   if (!config.data.reservationsEnabled) return [];
-  const contracts = listed.filter(({ data }) => !data.toClose && !data.reservationsDisabled);
+  const contracts = listed.filter(({ data }) => !data.toClose && !data.reservationsDisabled && data.activeRental !== NO_RENTAL);
   const rows: BonusMarketFleet[] = [];
   const metadata = new Map<Address, { name: string; faction: number }>();
   const addresses = [...new Set(contracts.map(({ data }) => data.fleet))];
@@ -199,17 +198,14 @@ export async function discoverBonusMarket(rpcUrl: string, faction: BonusFaction)
     const snapshots = await readBonusSnapshots(rpc, batch, config, nowSeconds, receivedAtMs);
     for (const contract of batch) {
       const fleet = snapshots.get(contract.address);
-      const snapshot = fleet?.snapshot;
-      const rate = snapshot?.rentalRateAtlasPerDay
-        ?? Number(sdk.rateAfterStaleDecay(contract.data, config.data, nowSeconds)) / Number(config.data.stardustToAtlas || 100_000_000n);
-      const endsAtMs = snapshot?.activeRentalEndsAtMs ?? null;
-      const bidAtlas = snapshot?.currentMinimumBidAtlas;
+      if (!fleet) continue;
+      const { activeRentalEndsAtMs: endsAtMs, rentalRateAtlasPerDay: rate, currentMinimumBidAtlas: bidAtlas } = fleet.snapshot;
+      if (endsAtMs == null || endsAtMs <= chainNow(fleet)) continue;
       rows.push({
         contractAddress: contract.address, fleetName: metadata.get(contract.data.fleet)?.name ?? contract.data.fleet,
         rate, minimumSeconds: Number(contract.data.durationMinSeconds), endsAtMs,
-        bidAtlas: endsAtMs != null && endsAtMs > nowSeconds * 1_000 && bidAtlas != null ? Math.max(rate, bidAtlas) : null,
-        stateKnown: Boolean(snapshot),
-        demand: fleet ? bonusDemandContext(fleet.raw) : null,
+        bidAtlas: bidAtlas == null ? null : Math.max(rate, bidAtlas),
+        demand: bonusDemandContext(fleet.raw),
       });
     }
   }

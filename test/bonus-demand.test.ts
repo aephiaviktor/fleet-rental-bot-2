@@ -15,7 +15,7 @@ function event(type: string, seconds: number, fields: object = {}, reservationPr
   return { event: { type, contract, signature: 'signature', ...fields }, at: seconds * 1_000, slot: seconds, index: 0, signature: 'signature', keys: [], reservationProfile };
 }
 
-test('counts distinct bidder wallets regardless of profile attribution in the final minute of the latest closed rental', () => {
+test('counts distinct bidder wallets regardless of profile attribution throughout the latest closed rental', () => {
   const entries = [
     placed(1_200, 'next-cycle'),
     close(),
@@ -24,26 +24,29 @@ test('counts distinct bidder wallets regardless of profile attribution in the fi
     placed(999, 'wallet-a', 'profile-a'),
     placed(985, 'wallet-a', 'profile-b'),
     placed(940, 'wallet-b'),
-    placed(939, 'previous-minute'),
+    placed(939, 'early-bidder'),
+    placed(100, 'opening-bidder'),
     accepted(),
+    placed(99, 'before-start'),
     close(99),
     placed(90, 'older-wallet'),
   ];
   const result = lastReservationDemand(contract, entries);
-  assert.equal(result?.wallets, 2);
-  assert.deepEqual([result?.start, result?.end, result?.closedAt, result?.closeSignature], [940, 1_000, 1_020, 'signature']);
+  assert.equal(result?.wallets, 4);
+  assert.deepEqual([result?.start, result?.end, result?.closedAt, result?.closeSignature], [100, 1_000, 1_020, 'signature']);
   assert.deepEqual(result?.bids.map(({ at, wallet, signature }) => [at, wallet, signature]), [
+    [100, 'opening-bidder', 'signature'], [939, 'early-bidder', 'signature'],
     [940, 'wallet-b', 'signature'], [985, 'wallet-a', 'signature'], [999, 'wallet-a', 'signature'],
   ]);
-  assert.equal(lastReservationDemand(contract, entries.filter(item => item.event.borrower !== 'wallet-b'))?.wallets, 1);
+  assert.equal(lastReservationDemand(contract, entries.filter(item => item.event.borrower !== 'wallet-b'))?.wallets, 3);
 });
 
 test('uses the revised reservation deadline after a rental cancellation', () => {
   assert.equal(lastReservationDemand(contract, [
-    close(920), placed(897, 'rival-a'),
+    close(920), placed(900, 'at-deadline'), placed(897, 'rival-a'),
     event('RentalCancelled', 890, { rentalState, borrower, newEndTime: 900n }),
-    placed(841, 'rival-b'), placed(839, 'too-early'), accepted(1_200),
-  ])?.wallets, 2);
+    placed(841, 'rival-b'), placed(839, 'early-bidder'), accepted(1_200),
+  ])?.wallets, 3);
 });
 
 test('rejects new contracts and incomplete history and ignores a same-renter handover', () => {
@@ -53,8 +56,8 @@ test('rejects new contracts and incomplete history and ignores a same-renter han
   assert.equal(lastReservationDemand(contract, [close(), newRental, placed(970, 'profile-a'), accepted()])?.wallets, 1);
 });
 
-test('reports a verified zero when the completed period is known and has no final-minute bids', () => {
-  const result = lastReservationDemand(contract, [close(), placed(939, 'early'), accepted()]);
+test('reports a verified zero when the completed period is known and has no bids', () => {
+  const result = lastReservationDemand(contract, [close(), placed(1_000, 'at-deadline'), accepted(), placed(99, 'before-start')]);
   assert.equal(result?.wallets, 0);
   assert.deepEqual(result?.bids, []);
 });

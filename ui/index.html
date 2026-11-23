@@ -5,14 +5,13 @@
   <div class="panel-toolbar bonus-toolbar">
     <div>
       <h2>Bonus Strategy</h2>
-      <p>Find reservable fleets in your faction at or above Min rate/d.</p>
+      <p>Fleets in your faction with an active rental and a rate at or above Min rate/d.</p>
     </div>
     <div class="bonus-controls">
       <label for="bonus-min-rate">Min rate/d (ATLAS)
         <input id="bonus-min-rate" type="number" min="0" step="0.00000001" title="Minimum rental rate for fleet discovery and FCFS.">
       </label>
       <button id="bonus-scan" type="button">Scan market</button>
-      <button id="bonus-check-demand" type="button" disabled>Check demand</button>
     </div>
   </div>
   <p id="bonus-market-status" class="earnings-note" role="status"></p>
@@ -22,7 +21,7 @@
     <table class="rules-table bonus-table">
       <thead><tr>
         <th>Fleet</th><th>Rate/d</th><th>Min days</th><th>Opening bid</th><th>Next bid</th>
-        <th>ATLAS to lock</th><th>Ending In</th><th>Max bid (ATLAS)</th><th>FCFS</th><th>Status</th><th>Demand · final 60s</th>
+        <th>ATLAS to lock</th><th>Ending In</th><th>Max bid (ATLAS)</th><th>FCFS</th><th>Status</th><th>Demand · last period</th>
       </tr></thead>
       <tbody id="bonus-body"></tbody>
     </table>

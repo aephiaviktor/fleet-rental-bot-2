@@ -11,18 +11,21 @@ const {
   getConfigStateEncoder, getContractStateEncoder, getFleetDecoder, getFleetEncoder, getRentalStateEncoder, RentalStatus,
 } = createRequire(import.meta.url)('@sly-rentals/core/codama') as typeof import('@sly-rentals/core/codama');
 
-test('market scan and FCFS polling are scoped to a verified fleet faction', async () => {
+test('market scan verifies faction and active rentals while FCFS polling stays faction-scoped', async () => {
   const empty = address('11111111111111111111111111111111');
   const fleet = address('So11111111111111111111111111111111111111112');
   const clock = address('SysvarC1ock11111111111111111111111111111111');
   const activeContract = address('FiELMQBWWxRtv78dQQcpD2McCsrRZMhgbXETrH1EyMk7');
   const idleContract = address('85BbUrMbPGDekp8mfSznWaSujHKaHrSgsTmiRfVr62Bo');
+  const expiredContract = address('BPFLoaderUpgradeab1e11111111111111111111111');
   const closedContract = address('gQxJAPtmHYAfhLZFxipsESMxKiLkbARNcSpG63dKm8x');
   const disabledContract = address('ComputeBudget111111111111111111111111111111');
   const offFactionContract = address('Vote111111111111111111111111111111111111111');
   const offFactionFleet = address('Stake11111111111111111111111111111111111111');
   const unknownFactionContract = address('AddressLookupTab1e1111111111111111111111111');
   const active = await rentalSdk().deriveActiveRental(activeContract);
+  const expired = await rentalSdk().deriveActiveRental(expiredContract);
+  const oniActive = await rentalSdk().deriveActiveRental(offFactionContract);
   const configAddress = await rentalSdk().deriveConfig();
   const now = 1_800_000_000;
   const end = now + 2 * 86_400;
@@ -35,9 +38,9 @@ test('market scan and FCFS polling are scoped to a verified fleet faction', asyn
     weightMultiplier: 1.5, maxWeight: 5, captureRateBps: 10_500, atlasPerPoint: 100, contestedMultiplierMaxBps: 465,
     rentalsCompleted: 0, lookupTable: empty, createdAt: 0, updatedAt: 0, staleDiscountPerDayBps: 0, bonusMultiplierBps: 100,
   });
-  const rentalBytes = getRentalStateEncoder().encode({
-    version: 2, bump: 255, borrower: idleContract, borrowerState: idleContract, borrowerProfile: idleContract, contract: activeContract,
-    rate: 400_000_000_000, lastPayment: 0, escrow: 0, startTime: now - 86_400, endTime: end, serviceFee: 0, feeBps: 0,
+  const rentalBytes = (contract: Address, endTime: number) => getRentalStateEncoder().encode({
+    version: 2, bump: 255, borrower: idleContract, borrowerState: idleContract, borrowerProfile: idleContract, contract,
+    rate: 400_000_000_000, lastPayment: 0, escrow: 0, startTime: now - 86_400, endTime, serviceFee: 0, feeBps: 0,
     referrer: null, discountBps: 0, bidPoints: 0, bidAtlas: 0, cancelDelayMin: 0, status: RentalStatus.Active, updatedAt: 0, createdAt: 0,
   });
   const fleetDecoder = getFleetDecoder();
@@ -60,13 +63,14 @@ test('market scan and FCFS polling are scoped to a verified fleet faction', asyn
     })),
   });
   const listings = [
-    listed(activeContract, active), listed(idleContract, empty), listed(closedContract, empty, true),
-    listed(disabledContract, empty, false, true),
-    listed(offFactionContract, empty, false, false, offFactionFleet),
+    listed(activeContract, active), listed(idleContract, empty), listed(expiredContract, expired),
+    listed(closedContract, active, true), listed(disabledContract, active, false, true),
+    listed(offFactionContract, oniActive, false, false, offFactionFleet),
     listed(unknownFactionContract, empty, false, false, empty),
   ];
   const accounts = new Map<Address, ReturnType<typeof account>>([
-    [configAddress, account(configBytes)], [clock, account(clockBytes, empty)], [active, account(rentalBytes)],
+    [configAddress, account(configBytes)], [clock, account(clockBytes, empty)], [active, account(rentalBytes(activeContract, end))],
+    [expired, account(rentalBytes(expiredContract, now - 10))], [oniActive, account(rentalBytes(offFactionContract, end))],
     [fleet, account(fleetBytes(1, 'Market Scout'), MAINNET_SAGE_PROGRAM)],
     [offFactionFleet, account(fleetBytes(2, 'ONI Scout'), MAINNET_SAGE_PROGRAM)],
     ...listings.map(listing => [listing.pubkey, listing.account] as const),
@@ -88,11 +92,11 @@ test('market scan and FCFS polling are scoped to a verified fleet faction', asyn
   try {
     const rpcUrl = 'https://rpc.example.test';
     const rows = await discoverBonusMarket(rpcUrl, 'MUD');
-    assert.deepEqual(rows.map(row => row.contractAddress), [activeContract, idleContract]);
-    assert.deepEqual(rows.map(row => row.fleetName), ['Market Scout', 'Market Scout']);
-    assert.deepEqual(rows.map(row => row.bidAtlas), [4000, null]);
-    assert.deepEqual(rows.map(row => row.endsAtMs), [end * 1000, null]);
-    assert.ok(rows.every(row => row.minimumSeconds === 3600 && row.stateKnown));
+    assert.deepEqual(rows.map(row => row.contractAddress), [activeContract]);
+    assert.deepEqual(rows.map(row => row.fleetName), ['Market Scout']);
+    assert.deepEqual(rows.map(row => row.bidAtlas), [4000]);
+    assert.deepEqual(rows.map(row => row.endsAtMs), [end * 1000]);
+    assert.ok(rows.every(row => row.minimumSeconds === 3600 && row.demand.contractAddress === row.contractAddress));
     assert.deepEqual(calls.sort(), ['getAccountInfo', 'getAccountInfo', 'getMultipleAccounts', 'getMultipleAccounts', 'getProgramAccounts']);
     assert.deepEqual((await discoverBonusMarket(rpcUrl, 'ONI')).map(row => row.contractAddress), [offFactionContract]);
     assert.deepEqual(await discoverBonusMarket(rpcUrl, 'USTUR'), []);

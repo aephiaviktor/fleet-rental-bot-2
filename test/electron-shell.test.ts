@@ -259,7 +259,7 @@ test('RPC Usage shows request telemetry instead of limiter settings', async () =
   assert.match(main, /ipcMain\.handle\('rpc-usage:day'/);
 });
 
-test('Bonus Strategy lists faction and rate matches before and after demand diagnostics', async () => {
+test('Bonus Strategy lists active rentals and loads wallet counts as diagnostics', async () => {
   const [renderer, main] = await Promise.all([readFile('ui/app.js', 'utf8'), readFile('electron/main.cjs', 'utf8')]);
   class Element {
     children: Element[] = [];
@@ -271,14 +271,16 @@ test('Bonus Strategy lists faction and rate matches before and after demand diag
     setAttribute() {}
   }
   const ids = ['bonus-panel', 'bonus-min-rate', 'bonus-body', 'bonus-status', 'bonus-market-status', 'bonus-scan',
-    'bonus-check-demand', 'bonus-demand-status'];
+    'bonus-demand-status'];
   const elements = new Map(ids.map(id => [id, new Element()]));
   const demand = new Map([['incomplete', { diagnostic: { status: 'incomplete-history' } }],
-    ['zero', { diagnostic: { status: 'verified', wallets: 0 } }]]);
-  const rows = [['unchecked', 3500], ['incomplete', 3500], ['zero', 3500], ['below-rate', 2999]]
-    .map(([contractAddress, rate]) => ({ contractAddress, fleetName: contractAddress, rate, minimumSeconds: 86400 }));
+    ['zero', { diagnostic: { status: 'verified', wallets: 0 } }], ['three', { diagnostic: { status: 'verified', wallets: 3 } }]]);
+  const now = Date.now();
+  const rows = [['unchecked', 3500], ['incomplete', 3500], ['zero', 3500], ['three', 3500], ['below-rate', 2999],
+    ['waiting', 3500, null], ['expired', 3500, now - 1]]
+    .map(([contractAddress, rate, endsAtMs = now + 60_000]) => ({ contractAddress, fleetName: contractAddress, rate, endsAtMs, minimumSeconds: 86400 }));
   const sources = [
-    renderer.slice(renderer.indexOf('function renderBonusStrategy('), renderer.indexOf('async function scanBonusMarket(')),
+    renderer.slice(renderer.indexOf('function activeBonusListings('), renderer.indexOf('async function scanBonusMarket(')),
     renderer.slice(renderer.indexOf('function bonusDemandLabel('), renderer.indexOf('function showBonusDemand(')),
   ];
   const render = runInNewContext(`${sources.join('\n')}\nrenderBonusStrategy;`, {
@@ -292,10 +294,11 @@ test('Bonus Strategy lists faction and rate matches before and after demand diag
   });
   render();
   const rendered = elements.get('bonus-body')!.children.map(row => [row.children[0].textContent,
-    row.children.at(-1)?.children[0].textContent]);
-  assert.deepEqual(rendered, [['incomplete', 'History incomplete'], ['unchecked', 'Check'], ['zero', '0 wallets']]);
+    (row.children.at(-1)?.children[0] ?? row.children.at(-1))?.textContent]);
+  assert.deepEqual(rendered, [['incomplete', 'History incomplete'], ['three', '3 wallets'], ['unchecked', '—'], ['zero', '0 wallets']]);
   const scan = renderer.slice(renderer.indexOf('async function scanBonusMarket('), renderer.indexOf('function bonusDemandLabel('));
-  assert.doesNotMatch(scan, /checkBonusDemand/);
+  assert.match(scan, /void checkBonusDemand\(\)/);
+  assert.doesNotMatch(renderer, /bonus-check-demand/);
   const bidding = main.slice(main.indexOf('async function pollBonusStrategy('), main.indexOf('async function scheduleLcfsAttempts('));
   assert.match(bidding, /executeBonusBid/);
   assert.doesNotMatch(bidding, /diagnoseBonusDemand|verifyBonusDemand/);

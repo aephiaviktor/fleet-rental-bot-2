@@ -285,6 +285,19 @@ let bonusMarketTimer = null;
 let bonusDemandRequest = null;
 let bonusDemandError = '';
 
+function activeBonusListings(market, configuration, report) {
+  const armed = new Set(configuration.rules.filter(rule => rule.fcfs).map(rule => rule.contractAddress));
+  const now = Date.now();
+  return (market?.rows ?? []).map(listing => {
+    const status = armed.has(listing.contractAddress) ? report?.rows[listing.contractAddress] : null;
+    const live = status?.endsAtMs === listing.endsAtMs ? status : null;
+    return {
+      listing, live, rate: live?.rate ?? listing.rate,
+      ends: listing.endsAtMs,
+    };
+  }).filter(({ rate, ends }) => rate >= configuration.minimumRateAtlasPerDay && ends > now);
+}
+
 function renderBonusStrategy(force = false) {
   const panel = $('bonus-panel');
   if (panel.hidden || (!force && panel.contains(document.activeElement) && document.activeElement?.tagName === 'INPUT')) return;
@@ -313,27 +326,21 @@ function renderBonusStrategy(force = false) {
   const rules = new Map(configuration.rules.map(rule => [rule.contractAddress, rule]));
   const watched = new Map((S.document?.entries ?? []).map(entry => [entry.contractAddress, entry]));
   const demandRun = bonusDemandRequest?.profile === profile && bonusDemandRequest.rpcUrl === S.settings?.rpcUrl ? bonusDemandRequest : null;
-  const rows = (market?.rows ?? []).map(listing => {
+  const rows = activeBonusListings(market, configuration, report).map(({ listing, live, rate, ends }) => {
     const { contractAddress } = listing;
     const entry = watched.get(contractAddress);
     const result = entry && S.live.get(entry.id);
     const snapshot = result?.ok && result.row.entry.contractAddress === contractAddress ? result.row.snapshot : null;
     const rule = rules.get(contractAddress) ?? { contractAddress, fcfs: false, maximumBidAtlas: 0 };
-    const live = rule.fcfs ? report?.rows[contractAddress] : null;
     return {
       contractAddress, listing, entry, rule, live,
       name: snapshot?.fleetName || listing?.fleetName || entry?.label || contractAddress,
-      rate: live?.rate ?? listing?.rate ?? snapshot?.rentalRateAtlasPerDay,
-      duration: live?.minimumSeconds ?? listing?.minimumSeconds ?? snapshot?.minimumDurationSeconds,
-      ends: live?.rate == null ? listing?.endsAtMs : live.endsAtMs,
+      rate, ends, duration: live?.minimumSeconds ?? listing.minimumSeconds,
     };
-  }).filter(({ rate }) => rate >= configuration.minimumRateAtlasPerDay);
+  });
   const completed = rows.filter(row => scan?.demand.has(row.contractAddress)).length;
-  const demandButton = $('bonus-check-demand');
-  demandButton.disabled = !rows.length || Boolean(demandRun) || Boolean(market?.error);
-  demandButton.onclick = () => void checkBonusDemand(rows.map(row => row.contractAddress));
   if (!scanning && market?.fetchedAtMs != null) {
-    marketNote.textContent = [market.error, `${rows.length} ${market.faction} fleets at or above Min rate/d`].filter(Boolean).join(' · ');
+    marketNote.textContent = [market.error, `${rows.length} ${market.faction} fleets with active rentals at or above Min rate/d`].filter(Boolean).join(' · ');
   } else if (market?.error) marketNote.textContent = market.error;
   $('bonus-demand-status').textContent = bonusDemandError || (demandRun
     ? `Checking demand · ${demandRun.checked}/${demandRun.total}`
@@ -346,7 +353,7 @@ function renderBonusStrategy(force = false) {
     fleet.title = contractAddress;
     const opening = el('td', n(rate));
     opening.title = 'One day’s rate as the ATLAS premium, subject to the protocol minimum.';
-    const nextBid = live ? live.bidAtlas : ends > Date.now() ? listing?.bidAtlas : null;
+    const nextBid = live ? live.bidAtlas : listing.bidAtlas;
     const estimate = nextBid == null || rate == null || duration == null ? null : nextBid + rate * duration / 86400;
     const required = el('td', n(live ? live.requiredAtlas : estimate));
     required.title = 'Quoted premium plus prepaid rent for the minimum allowed duration.';
@@ -365,32 +372,31 @@ function renderBonusStrategy(force = false) {
     const fcfs = input('checkbox', '', 'fcfs');
     const legacyOrphan = rule.fcfs && !entry && !rule.market;
     fcfs.checked = rule.fcfs && !legacyOrphan;
-    fcfs.disabled = !profile || bonusSaving || (!fcfs.checked && (!listing || rule.maximumBidAtlas <= 0));
+    fcfs.disabled = !profile || bonusSaving || (!fcfs.checked && rule.maximumBidAtlas <= 0);
     if (!fcfs.checked && rule.maximumBidAtlas <= 0) fcfs.title = 'Set a positive Max bid to enable FCFS.';
     fcfs.setAttribute('aria-label', `FCFS for ${name}`);
     fcfs.onchange = () => void saveBonusRule({ ...rule, fcfs: fcfs.checked, market: true });
     fcfsCell.append(fcfs);
     const detail = rule.fcfs && entry?.enabled === false ? 'Fleet paused'
       : rule.fcfs && entry?.canSafelyOperate === false ? 'Fleet marked unsafe'
-      : legacyOrphan && listing ? 'Enable FCFS here to resume'
-      : live?.detail || (!listing ? 'Awaiting market listing' : !listing.stateKnown ? 'Rental state unavailable'
-        : !ends || ends <= Date.now() ? 'Waiting for next rental' : 'Reservation available');
+      : legacyOrphan ? 'Enable FCFS here to resume' : live?.detail || 'Reservation available';
     const status = el('td', detail, live?.status === 'warning' ? 'funding-unknown' : live?.status === 'submitted' ? 'funding-ready' : '');
     const proof = scan.demand.get(contractAddress)?.diagnostic;
     const pending = demandRun?.pending.has(contractAddress);
-    const diagnostic = el('button', pending ? 'Checking…' : proof ? bonusDemandLabel(proof) : 'Check', 'bonus-demand-result');
-    diagnostic.type = 'button';
-    diagnostic.disabled = Boolean(pending || (!proof && (demandRun || market.error)));
-    diagnostic.setAttribute('aria-label', `${diagnostic.textContent} · Demand for ${name}`);
-    diagnostic.onclick = () => proof ? showBonusDemand(name, proof) : void checkBonusDemand([contractAddress]);
-    const demandCell = el('td');
-    demandCell.append(diagnostic);
+    const demandCell = el('td', pending ? 'Loading…' : proof ? null : '—');
+    if (proof && !pending) {
+      const diagnostic = el('button', bonusDemandLabel(proof), 'bonus-demand-result');
+      diagnostic.type = 'button';
+      diagnostic.setAttribute('aria-label', `${diagnostic.textContent} · Last reservation for ${name}`);
+      diagnostic.onclick = () => showBonusDemand(name, proof);
+      demandCell.append(diagnostic);
+    }
     tr.append(fleet, el('td', n(rate)), el('td', n(duration == null ? null : duration / 86400, 4)), opening,
       el('td', n(nextBid)), required, ending, capCell, fcfsCell, status, demandCell);
     body.append(tr);
   }
   if (!scanning && !rows.length && !note.textContent && market?.fetchedAtMs) {
-    note.textContent = 'No fleets meet the minimum rate in this faction.';
+    note.textContent = 'No active rentals in this faction meet Min rate/d.';
   }
 }
 
@@ -412,7 +418,8 @@ async function scanBonusMarket(refresh = false, restart = false) {
     const demand = new Map();
     for (const row of report.rows) {
       const proof = previous?.get(row.contractAddress);
-      if (proof && proof.revision === (row.demand?.revision ?? null)) demand.set(row.contractAddress, proof);
+      const keep = !refresh || proof?.diagnostic.status === 'verified' || proof?.diagnostic.status === 'no-completed-period';
+      if (keep && proof?.revision === row.demand.revision) demand.set(row.contractAddress, proof);
     }
     bonusMarket = { rpcUrl, profile, report, demand };
   } catch {
@@ -427,7 +434,10 @@ async function scanBonusMarket(refresh = false, restart = false) {
     if (bonusMarketRequest === request) {
       bonusMarketRequest = null;
       renderBonusStrategy();
-      if (!$('bonus-panel').hidden) bonusMarketTimer = setTimeout(() => void scanBonusMarket(), 60_000);
+      if (!$('bonus-panel').hidden) {
+        bonusMarketTimer = setTimeout(() => void scanBonusMarket(), 60_000);
+        void checkBonusDemand();
+      }
     }
   }
 }
@@ -454,7 +464,7 @@ function showBonusDemand(fleetName, result) {
   list.replaceChildren();
   if (result.status === 'verified') {
     const utc = seconds => RulesDisplay.utc(seconds * 1_000);
-    windowNote.textContent = `Bid window · ${utc(result.start)} to ${utc(result.end)} (end exclusive). Rental closed ${utc(result.closedAt)}.`;
+    windowNote.textContent = `Last completed reservation period · ${utc(result.start)} to ${utc(result.end)} (end exclusive). Rental closed ${utc(result.closedAt)}.`;
     close.onclick = () => void window.fleetRentalBot.openHistoryTransaction(result.closeSignature).catch(() => {});
     for (const bid of result.bids) {
       const row = el('tr');
@@ -477,14 +487,17 @@ function showBonusDemand(fleetName, result) {
   dialog.showModal();
 }
 
-async function checkBonusDemand(contracts) {
+async function checkBonusDemand() {
   const scan = bonusMarket;
   if (!scan || scan.report.error || bonusStrategy?.profile !== scan.profile
     || scan.rpcUrl !== S.settings?.rpcUrl || scan.profile !== S.settings?.playerProfile
     || (bonusDemandRequest?.profile === scan.profile && bonusDemandRequest.rpcUrl === scan.rpcUrl)) return;
   const { profile, rpcUrl } = scan;
-  const revisions = new Map(scan.report.rows.map(row => [row.contractAddress, row.demand?.revision ?? null]));
-  const pending = new Set(contracts);
+  const report = latestBonusStatus?.profile === profile ? latestBonusStatus : null;
+  const revisions = new Map(activeBonusListings(scan.report, bonusStrategy.configuration, report)
+    .filter(({ listing }) => !scan.demand.has(listing.contractAddress))
+    .map(({ listing }) => [listing.contractAddress, listing.demand.revision]));
+  const pending = new Set(revisions.keys());
   const ids = [...pending];
   if (!ids.length) return;
   const request = { profile, rpcUrl, pending, checked: 0, total: ids.length };
@@ -498,7 +511,7 @@ async function checkBonusDemand(contracts) {
       const batch = ids.slice(i, i + batchSize);
       const proofs = await window.fleetRentalBot.checkBonusDemand(profile, batch);
       if (!current()) return;
-      const latest = new Map(bonusMarket.report.rows.map(row => [row.contractAddress, row.demand?.revision ?? null]));
+      const latest = new Map(bonusMarket.report.rows.map(row => [row.contractAddress, row.demand.revision]));
       for (const proof of proofs) {
         if (latest.get(proof.contract) === proof.revision && revisions.get(proof.contract) === proof.revision) {
           bonusMarket.demand.set(proof.contract, proof);
@@ -509,7 +522,7 @@ async function checkBonusDemand(contracts) {
       renderBonusStrategy();
     }
   } catch {
-    if (current()) bonusDemandError = 'Demand diagnostics interrupted. Run Check demand to retry.';
+    if (current()) bonusDemandError = 'Demand diagnostics interrupted. Use Scan market to retry.';
   } finally {
     if (bonusDemandRequest === request) {
       bonusDemandRequest = null;

@@ -5,7 +5,6 @@ import type { AuditEvent, RentalClosedEvent } from '@sly-rentals/core/audit';
 import { NEXT_GEN_SRSLY_PROGRAM_ID } from './model.js';
 
 const { parseAnchorEvents } = createRequire(import.meta.url)('@sly-rentals/core/audit') as typeof import('@sly-rentals/core/audit');
-const FINAL_MINUTE_SECONDS = 60;
 
 export interface BonusDemandContext {
   contractAddress: string;
@@ -67,10 +66,9 @@ export function lastReservationDemand(contract: string, evidence: Iterable<{ eve
       const end = revisedEnd ?? Number(event.endTime);
       const start = Number(event.startTime);
       if (start >= close.at / 1_000 || (Number(event.endTime) > close.at / 1_000 && revisedEnd === undefined)) continue;
-      if (!Number.isSafeInteger(end) || end <= start || end > close.at / 1_000) return undefined;
-      const lowerBound = Math.max(start, end - FINAL_MINUTE_SECONDS);
-      const included = bids.filter(bid => bid.at >= lowerBound && bid.at < end).reverse();
-      return { start: lowerBound, end, closedAt: close.at / 1_000, closeSignature: close.event.signature,
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end > close.at / 1_000) return undefined;
+      const included = bids.filter(bid => bid.at >= start && bid.at < end).reverse();
+      return { start, end, closedAt: close.at / 1_000, closeSignature: close.event.signature,
         wallets: new Set(included.map(bid => bid.wallet)).size, bids: included };
     }
   }

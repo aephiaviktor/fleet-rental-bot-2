@@ -29,10 +29,13 @@ prevent duplicate automatic sends for the same row and rental end across refresh
 ## Bonus Strategy
 
 Bonus Strategy scans reservable fleets in the Player Profile’s on-chain faction. It
-requires the configured Min rate/d (3,000 ATLAS by default) and at least two distinct
-bidder wallets with confirmed bids in the final 60 seconds of the last completed
-reservation period. The list puts the shortest minimum rental durations first. Set a
-positive Max bid and enable FCFS directly on a qualifying listing.
+requires the configured Min rate/d (3,000 ATLAS by default). The list sorts by
+minimum rental duration. Set a positive Max bid and enable FCFS directly on a listing.
+
+Use **Check demand** for the visible listings or **Check** on one fleet. Demand
+diagnostics show distinct wallets from successful bids in the last completed
+reservation period’s final 60 seconds, the exact window, and transaction links.
+They report incomplete history and RPC failures separately from a verified zero.
 FCFS is saved per Player Profile and uses the signing wallet and Helius Sender.
 For fleets also in Fleet Reservations, FCFS checks that the fleet is enabled and safe.
 

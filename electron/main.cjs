@@ -264,9 +264,8 @@ async function pollBonusStrategy() {
       return;
     }
     await requireAephiaAccess();
-    const [{ withRpcDeadline }, { resolveBonusFaction, pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid },
-      { bonusDemandContext, verifyBonusDemand, MINIMUM_DEMAND_WALLETS }] = await Promise.all([
-      domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'), domainModule('bonus-demand'),
+    const [{ withRpcDeadline }, { resolveBonusFaction, pollBonusFleets, ourBonusDefender, planBonusReservation, executeBonusBid }] = await Promise.all([
+      domainModule('rpc-fetch-limiter'), domainModule('bonus-strategy'),
     ]);
     if (!current()) return;
     const faction = await withRpcDeadline(AbortSignal.timeout(10_000), () => resolveBonusFaction(settings.playerProfile, settings.rpcUrl)).catch(() => null);
@@ -303,12 +302,6 @@ async function pollBonusStrategy() {
           status.rows[contract] = { ...row, status: 'waiting', detail: 'FCFS paused below Min rate/d' };
           continue;
         }
-        const demand = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, bonusDemandContext(fleet.raw)));
-        if (demand == null || demand < MINIMUM_DEMAND_WALLETS) {
-          status.rows[contract] = { ...row, status: 'waiting', detail: 'FCFS paused until the latest period meets the demand rule' };
-          continue;
-        }
-        if (!current()) break;
         const outcome = await withRpcDeadline(AbortSignal.timeout(15_000), () => executeBonusBid(
           entry, rule, fleet, { ...settings, faction }, directory, historyDatabasePath(), async () => {
             await requireAephiaAccess();
@@ -693,17 +686,16 @@ ipcMain.handle('bonus:demand', async (event, profile, contracts) => {
   if (profile !== settings.playerProfile || cache?.rpcUrl !== settings.rpcUrl || !cache.report) return [];
   if (!Array.isArray(contracts) || contracts.length > 4) throw new Error('Invalid demand check request');
   const lookup = new Map(cache.report.rows.map(row => [row.contractAddress, row.demand]));
-  const [{ withRpcDeadline }, { verifyBonusDemand, MINIMUM_DEMAND_WALLETS }] = await Promise.all([
+  const [{ withRpcDeadline }, { diagnoseBonusDemand }] = await Promise.all([
     domainModule('rpc-fetch-limiter'), domainModule('bonus-demand'),
   ]);
   return Promise.all([...new Set(contracts)].filter(contract => lookup.has(contract)).map(async contract => {
     const context = lookup.get(contract);
-    if (!context) return { contract, revision: null, wallets: null, qualifies: false };
-    let wallets;
-    try {
-      wallets = await withRpcDeadline(AbortSignal.timeout(120_000), () => verifyBonusDemand(settings.rpcUrl, context));
-    } catch { wallets = null; }
-    return { contract, revision: context.revision, wallets, qualifies: wallets >= MINIMUM_DEMAND_WALLETS };
+    if (!context) return { contract, revision: null, diagnostic: {
+      status: 'state-unavailable', detail: 'The market scan could not verify the latest rental state.', transactionsScanned: 0,
+    } };
+    const diagnostic = await withRpcDeadline(AbortSignal.timeout(120_000), () => diagnoseBonusDemand(settings.rpcUrl, context));
+    return { contract, revision: context.revision, diagnostic };
   }));
 });
 

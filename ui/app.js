@@ -282,6 +282,8 @@ let bonusError = '';
 let bonusMarket = null;
 let bonusMarketRequest = null;
 let bonusMarketTimer = null;
+let bonusDemandRequest = null;
+let bonusDemandError = '';
 
 function renderBonusStrategy(force = false) {
   const panel = $('bonus-panel');
@@ -310,13 +312,9 @@ function renderBonusStrategy(force = false) {
   }
   const rules = new Map(configuration.rules.map(rule => [rule.contractAddress, rule]));
   const watched = new Map((S.document?.entries ?? []).map(entry => [entry.contractAddress, entry]));
-  const catalog = new Map((market?.rows ?? []).map(row => [row.contractAddress, row]));
-  const candidates = [...catalog.values()].filter(row => row.rate >= configuration.minimumRateAtlasPerDay);
-  const rows = candidates.filter(row => {
-    const proof = scan.demand.get(row.contractAddress);
-    return proof?.qualifies && proof.revision === row.demand?.revision;
-  }).map(({ contractAddress }) => {
-    const listing = catalog.get(contractAddress);
+  const demandRun = bonusDemandRequest?.profile === profile && bonusDemandRequest.rpcUrl === S.settings?.rpcUrl ? bonusDemandRequest : null;
+  const rows = (market?.rows ?? []).map(listing => {
+    const { contractAddress } = listing;
     const entry = watched.get(contractAddress);
     const result = entry && S.live.get(entry.id);
     const snapshot = result?.ok && result.row.entry.contractAddress === contractAddress ? result.row.snapshot : null;
@@ -330,12 +328,16 @@ function renderBonusStrategy(force = false) {
       ends: live?.rate == null ? listing?.endsAtMs : live.endsAtMs,
     };
   }).filter(({ rate }) => rate >= configuration.minimumRateAtlasPerDay);
-  if (scan && market.fetchedAtMs != null) {
-    const checked = candidates.filter(row => scan.demand.has(row.contractAddress)).length;
-    const unknown = candidates.filter(row => scan.demand.get(row.contractAddress)?.wallets === null).length;
-    const count = `${rows.length} qualifying ${market.faction} fleets · ${checked}/${candidates.length} demand checks`;
-    marketNote.textContent = [market.error, count, unknown ? `${unknown} without verified history` : ''].filter(Boolean).join(' · ');
+  const completed = rows.filter(row => scan?.demand.has(row.contractAddress)).length;
+  const demandButton = $('bonus-check-demand');
+  demandButton.disabled = !rows.length || Boolean(demandRun) || Boolean(market?.error);
+  demandButton.onclick = () => void checkBonusDemand(rows.map(row => row.contractAddress));
+  if (!scanning && market?.fetchedAtMs != null) {
+    marketNote.textContent = [market.error, `${rows.length} ${market.faction} fleets at or above Min rate/d`].filter(Boolean).join(' · ');
   } else if (market?.error) marketNote.textContent = market.error;
+  $('bonus-demand-status').textContent = bonusDemandError || (demandRun
+    ? `Checking demand · ${demandRun.checked}/${demandRun.total}`
+    : completed ? `${completed}/${rows.length} fleets with demand diagnostics` : '');
   rows.sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity)
     || (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
   for (const { contractAddress, listing, entry, rule, live, name, rate, duration, ends } of rows) {
@@ -374,12 +376,21 @@ function renderBonusStrategy(force = false) {
       : live?.detail || (!listing ? 'Awaiting market listing' : !listing.stateKnown ? 'Rental state unavailable'
         : !ends || ends <= Date.now() ? 'Waiting for next rental' : 'Reservation available');
     const status = el('td', detail, live?.status === 'warning' ? 'funding-unknown' : live?.status === 'submitted' ? 'funding-ready' : '');
+    const proof = scan.demand.get(contractAddress)?.diagnostic;
+    const pending = demandRun?.pending.has(contractAddress);
+    const diagnostic = el('button', pending ? 'Checking…' : proof ? bonusDemandLabel(proof) : 'Check', 'bonus-demand-result');
+    diagnostic.type = 'button';
+    diagnostic.disabled = Boolean(pending || (!proof && (demandRun || market.error)));
+    diagnostic.setAttribute('aria-label', `${diagnostic.textContent} · Demand for ${name}`);
+    diagnostic.onclick = () => proof ? showBonusDemand(name, proof) : void checkBonusDemand([contractAddress]);
+    const demandCell = el('td');
+    demandCell.append(diagnostic);
     tr.append(fleet, el('td', n(rate)), el('td', n(duration == null ? null : duration / 86400, 4)), opening,
-      el('td', n(nextBid)), required, ending, capCell, fcfsCell, status);
+      el('td', n(nextBid)), required, ending, capCell, fcfsCell, status, demandCell);
     body.append(tr);
   }
   if (!scanning && !rows.length && !note.textContent && market?.fetchedAtMs) {
-    note.textContent = 'No fleets meet both the minimum rate and demand rule.';
+    note.textContent = 'No fleets meet the minimum rate in this faction.';
   }
 }
 
@@ -401,29 +412,15 @@ async function scanBonusMarket(refresh = false, restart = false) {
     const demand = new Map();
     for (const row of report.rows) {
       const proof = previous?.get(row.contractAddress);
-      if (proof?.revision === row.demand?.revision && proof?.wallets != null) demand.set(row.contractAddress, proof);
+      if (proof && proof.revision === (row.demand?.revision ?? null)) demand.set(row.contractAddress, proof);
     }
     bonusMarket = { rpcUrl, profile, report, demand };
-    renderBonusStrategy();
-    if (report.error || bonusStrategy?.profile !== profile) return;
-    const threshold = bonusStrategy.configuration.minimumRateAtlasPerDay;
-    const contracts = report.rows.filter(row => row.rate >= threshold).map(row => row.contractAddress);
-    const batchSize = Math.max(1, Math.min(4, Math.floor(S.settings?.rpcRequestsPerSecond ?? 4)));
-    for (let offset = 0; offset < contracts.length && current() && !$('bonus-panel').hidden; offset += batchSize) {
-      const proofs = await window.fleetRentalBot.checkBonusDemand(profile, contracts.slice(offset, offset + batchSize));
-      if (!current()) return;
-      for (const proof of proofs) {
-        const prior = demand.get(proof.contract);
-        if (proof.wallets !== null || prior?.revision !== proof.revision) demand.set(proof.contract, proof);
-      }
-      renderBonusStrategy();
-    }
   } catch {
     if (current()) {
       const cached = bonusMarket?.profile === profile && bonusMarket.rpcUrl === rpcUrl ? bonusMarket : null;
       bonusMarket = {
         rpcUrl, profile, demand: cached?.demand ?? new Map(),
-        report: { rows: [], ...cached?.report, error: 'Market or demand checks interrupted. Use Scan market to retry.' },
+        report: { rows: [], ...cached?.report, error: 'Market scan interrupted. Use Scan market to retry.' },
       };
     }
   } finally {
@@ -431,6 +428,92 @@ async function scanBonusMarket(refresh = false, restart = false) {
       bonusMarketRequest = null;
       renderBonusStrategy();
       if (!$('bonus-panel').hidden) bonusMarketTimer = setTimeout(() => void scanBonusMarket(), 60_000);
+    }
+  }
+}
+
+function bonusDemandLabel(result) {
+  if (result.status === 'verified') return `${result.wallets} wallet${result.wallets === 1 ? '' : 's'}`;
+  return {
+    'no-completed-period': 'No completed period',
+    'incomplete-history': 'History incomplete',
+    'rpc-error': 'RPC error',
+    'state-unavailable': 'Rental state unavailable',
+  }[result.status];
+}
+
+function showBonusDemand(fleetName, result) {
+  const dialog = $('bonus-demand-dialog');
+  $('bonus-demand-title').textContent = `Demand · ${fleetName}`;
+  $('bonus-demand-detail').textContent = `${result.detail ?? bonusDemandLabel(result)} · ${result.transactionsScanned} transactions scanned`;
+  const windowNote = $('bonus-demand-window');
+  const close = $('bonus-demand-close-tx');
+  const bids = $('bonus-demand-bids');
+  const list = $('bonus-demand-bid-list');
+  bids.hidden = close.hidden = windowNote.hidden = result.status !== 'verified';
+  list.replaceChildren();
+  if (result.status === 'verified') {
+    const utc = seconds => RulesDisplay.utc(seconds * 1_000);
+    windowNote.textContent = `Bid window · ${utc(result.start)} to ${utc(result.end)} (end exclusive). Rental closed ${utc(result.closedAt)}.`;
+    close.onclick = () => void window.fleetRentalBot.openHistoryTransaction(result.closeSignature).catch(() => {});
+    for (const bid of result.bids) {
+      const row = el('tr');
+      const tx = el('td');
+      const link = el('button', 'Solscan');
+      link.type = 'button';
+      link.onclick = () => void window.fleetRentalBot.openHistoryTransaction(bid.signature).catch(() => {});
+      tx.append(link);
+      row.append(el('td', utc(bid.at)), el('td', bid.wallet), tx);
+      list.append(row);
+    }
+    if (!result.bids.length) {
+      const row = el('tr');
+      const empty = el('td', 'No successful bids in this window.');
+      empty.colSpan = 3;
+      row.append(empty);
+      list.append(row);
+    }
+  }
+  dialog.showModal();
+}
+
+async function checkBonusDemand(contracts) {
+  const scan = bonusMarket;
+  if (!scan || scan.report.error || bonusStrategy?.profile !== scan.profile
+    || scan.rpcUrl !== S.settings?.rpcUrl || scan.profile !== S.settings?.playerProfile
+    || (bonusDemandRequest?.profile === scan.profile && bonusDemandRequest.rpcUrl === scan.rpcUrl)) return;
+  const { profile, rpcUrl } = scan;
+  const revisions = new Map(scan.report.rows.map(row => [row.contractAddress, row.demand?.revision ?? null]));
+  const pending = new Set(contracts);
+  const ids = [...pending];
+  if (!ids.length) return;
+  const request = { profile, rpcUrl, pending, checked: 0, total: ids.length };
+  const current = () => bonusDemandRequest === request && rpcUrl === S.settings?.rpcUrl && profile === S.settings?.playerProfile;
+  bonusDemandRequest = request;
+  bonusDemandError = '';
+  renderBonusStrategy();
+  try {
+    const batchSize = Math.max(1, Math.min(4, Math.floor(S.settings?.rpcRequestsPerSecond ?? 4)));
+    for (let i = 0; i < ids.length && current() && !$('bonus-panel').hidden; i += batchSize) {
+      const batch = ids.slice(i, i + batchSize);
+      const proofs = await window.fleetRentalBot.checkBonusDemand(profile, batch);
+      if (!current()) return;
+      const latest = new Map(bonusMarket.report.rows.map(row => [row.contractAddress, row.demand?.revision ?? null]));
+      for (const proof of proofs) {
+        if (latest.get(proof.contract) === proof.revision && revisions.get(proof.contract) === proof.revision) {
+          bonusMarket.demand.set(proof.contract, proof);
+        }
+      }
+      for (const contract of batch) pending.delete(contract);
+      request.checked += batch.length;
+      renderBonusStrategy();
+    }
+  } catch {
+    if (current()) bonusDemandError = 'Demand diagnostics interrupted. Run Check demand to retry.';
+  } finally {
+    if (bonusDemandRequest === request) {
+      bonusDemandRequest = null;
+      renderBonusStrategy();
     }
   }
 }

@@ -258,3 +258,45 @@ test('RPC Usage shows request telemetry instead of limiter settings', async () =
   assert.match(preload, /getRpcUsageDay: \(utcDate\) => ipcRenderer\.invoke\('rpc-usage:day', utcDate\)/);
   assert.match(main, /ipcMain\.handle\('rpc-usage:day'/);
 });
+
+test('Bonus Strategy lists faction and rate matches before and after demand diagnostics', async () => {
+  const [renderer, main] = await Promise.all([readFile('ui/app.js', 'utf8'), readFile('electron/main.cjs', 'utf8')]);
+  class Element {
+    children: Element[] = [];
+    classList = { toggle() {} };
+    constructor(public textContent = '') {}
+    append(...children: Element[]) { this.children.push(...children); }
+    replaceChildren() { this.children.length = 0; }
+    contains() { return false; }
+    setAttribute() {}
+  }
+  const ids = ['bonus-panel', 'bonus-min-rate', 'bonus-body', 'bonus-status', 'bonus-market-status', 'bonus-scan',
+    'bonus-check-demand', 'bonus-demand-status'];
+  const elements = new Map(ids.map(id => [id, new Element()]));
+  const demand = new Map([['incomplete', { diagnostic: { status: 'incomplete-history' } }],
+    ['zero', { diagnostic: { status: 'verified', wallets: 0 } }]]);
+  const rows = [['unchecked', 3500], ['incomplete', 3500], ['zero', 3500], ['below-rate', 2999]]
+    .map(([contractAddress, rate]) => ({ contractAddress, fleetName: contractAddress, rate, minimumSeconds: 86400 }));
+  const sources = [
+    renderer.slice(renderer.indexOf('function renderBonusStrategy('), renderer.indexOf('async function scanBonusMarket(')),
+    renderer.slice(renderer.indexOf('function bonusDemandLabel('), renderer.indexOf('function showBonusDemand(')),
+  ];
+  const render = runInNewContext(`${sources.join('\n')}\nrenderBonusStrategy;`, {
+    $: (id: string) => elements.get(id), el: (_tag: string, text: string) => new Element(text),
+    input: () => new Element(), n: String, heldTime: String,
+    document: { activeElement: null }, S: { settings: { playerProfile: 'p', rpcUrl: 'r' }, live: new Map() },
+    bonusStrategy: { profile: 'p', configuration: { minimumRateAtlasPerDay: 3000, rules: [] } },
+    bonusMarket: { profile: 'p', rpcUrl: 'r', report: { rows, faction: 'MUD', fetchedAtMs: 1 }, demand },
+    bonusMarketRequest: null, bonusDemandRequest: null, latestBonusStatus: null,
+    bonusError: '', bonusSaving: false, bonusDemandError: '',
+  });
+  render();
+  const rendered = elements.get('bonus-body')!.children.map(row => [row.children[0].textContent,
+    row.children.at(-1)?.children[0].textContent]);
+  assert.deepEqual(rendered, [['incomplete', 'History incomplete'], ['unchecked', 'Check'], ['zero', '0 wallets']]);
+  const scan = renderer.slice(renderer.indexOf('async function scanBonusMarket('), renderer.indexOf('function bonusDemandLabel('));
+  assert.doesNotMatch(scan, /checkBonusDemand/);
+  const bidding = main.slice(main.indexOf('async function pollBonusStrategy('), main.indexOf('async function scheduleLcfsAttempts('));
+  assert.match(bidding, /executeBonusBid/);
+  assert.doesNotMatch(bidding, /diagnoseBonusDemand|verifyBonusDemand/);
+});

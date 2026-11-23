@@ -285,6 +285,15 @@ let bonusMarketTimer = null;
 let bonusDemandRequest = null;
 let bonusDemandError = '';
 
+let bonusSort = { column: 'duration', direction: 'ascending' };
+
+function compareBonusValues(a, b, direction) {
+  if (a == null) return b == null ? 0 : 1;
+  if (b == null) return -1;
+  const order = typeof a === 'string' ? a.localeCompare(b) : Number(a) - Number(b);
+  return direction === 'descending' ? -order : order;
+}
+
 function activeBonusListings(market, configuration, report) {
   const armed = new Set(configuration.rules.filter(rule => rule.fcfs).map(rule => rule.contractAddress));
   const now = Date.now();
@@ -332,10 +341,21 @@ function renderBonusStrategy(force = false) {
     const result = entry && S.live.get(entry.id);
     const snapshot = result?.ok && result.row.entry.contractAddress === contractAddress ? result.row.snapshot : null;
     const rule = rules.get(contractAddress) ?? { contractAddress, fcfs: false, maximumBidAtlas: 0 };
+    const duration = live?.minimumSeconds ?? listing.minimumSeconds;
+    const nextBid = live ? live.bidAtlas : listing.bidAtlas;
+    const estimate = nextBid == null || rate == null || duration == null ? null : nextBid + rate * duration / 86400;
+    const legacyOrphan = rule.fcfs && !entry && !rule.market;
+    const detail = rule.fcfs && entry?.enabled === false ? 'Fleet paused'
+      : rule.fcfs && entry?.canSafelyOperate === false ? 'Fleet marked unsafe'
+      : legacyOrphan ? 'Enable FCFS here to resume' : live?.detail || 'Reservation available';
+    const pending = demandRun?.pending.has(contractAddress);
+    const proof = pending ? null : scan.demand.get(contractAddress)?.diagnostic;
     return {
-      contractAddress, listing, entry, rule, live,
+      contractAddress, rule, live,
       name: snapshot?.fleetName || listing?.fleetName || entry?.label || contractAddress,
-      rate, ends, duration: live?.minimumSeconds ?? listing.minimumSeconds,
+      rate, ends, duration, openingBid: rate, nextBid, requiredAtlas: live ? live.requiredAtlas : estimate,
+      maximumBidAtlas: rule.maximumBidAtlas, fcfsEnabled: rule.fcfs && !legacyOrphan, detail, pending, proof,
+      wallets: proof?.status === 'verified' ? proof.wallets : null,
     };
   });
   const completed = rows.filter(row => scan?.demand.has(row.contractAddress)).length;
@@ -345,21 +365,23 @@ function renderBonusStrategy(force = false) {
   $('bonus-demand-status').textContent = bonusDemandError || (demandRun
     ? `Checking demand · ${demandRun.checked}/${demandRun.total}`
     : completed ? `${completed}/${rows.length} fleets with demand diagnostics` : '');
-  rows.sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity)
-    || (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
-  for (const { contractAddress, listing, entry, rule, live, name, rate, duration, ends } of rows) {
+  const { column, direction } = bonusSort;
+  rows.sort((a, b) => compareBonusValues(a[column], b[column], direction)
+    || compareBonusValues(a.duration, b.duration)
+    || compareBonusValues(a.rate, b.rate, 'descending')
+    || a.name.localeCompare(b.name));
+  for (const { contractAddress, rule, live, name, rate, duration, ends, openingBid, nextBid, requiredAtlas,
+    maximumBidAtlas, fcfsEnabled, detail, pending, proof } of rows) {
     const tr = el('tr');
     const fleet = el('td', name);
     fleet.title = contractAddress;
-    const opening = el('td', n(rate));
+    const opening = el('td', n(openingBid));
     opening.title = 'One day’s rate as the ATLAS premium, subject to the protocol minimum.';
-    const nextBid = live ? live.bidAtlas : listing.bidAtlas;
-    const estimate = nextBid == null || rate == null || duration == null ? null : nextBid + rate * duration / 86400;
-    const required = el('td', n(live ? live.requiredAtlas : estimate));
+    const required = el('td', n(requiredAtlas));
     required.title = 'Quoted premium plus prepaid rent for the minimum allowed duration.';
     const ending = el('td', heldTime(ends == null ? null : Math.max(0, ends - Date.now())));
     const capCell = el('td');
-    const cap = input('number', rule.maximumBidAtlas || '', 'maximumBidAtlas');
+    const cap = input('number', maximumBidAtlas || '', 'maximumBidAtlas');
     cap.min = '0';
     cap.step = '0.00000001';
     cap.disabled = !profile || bonusSaving;
@@ -370,21 +392,15 @@ function renderBonusStrategy(force = false) {
     capCell.append(cap);
     const fcfsCell = el('td');
     const fcfs = input('checkbox', '', 'fcfs');
-    const legacyOrphan = rule.fcfs && !entry && !rule.market;
-    fcfs.checked = rule.fcfs && !legacyOrphan;
-    fcfs.disabled = !profile || bonusSaving || (!fcfs.checked && rule.maximumBidAtlas <= 0);
-    if (!fcfs.checked && rule.maximumBidAtlas <= 0) fcfs.title = 'Set a positive Max bid to enable FCFS.';
+    fcfs.checked = fcfsEnabled;
+    fcfs.disabled = !profile || bonusSaving || (!fcfsEnabled && maximumBidAtlas <= 0);
+    if (!fcfsEnabled && maximumBidAtlas <= 0) fcfs.title = 'Set a positive Max bid to enable FCFS.';
     fcfs.setAttribute('aria-label', `FCFS for ${name}`);
     fcfs.onchange = () => void saveBonusRule({ ...rule, fcfs: fcfs.checked, market: true });
     fcfsCell.append(fcfs);
-    const detail = rule.fcfs && entry?.enabled === false ? 'Fleet paused'
-      : rule.fcfs && entry?.canSafelyOperate === false ? 'Fleet marked unsafe'
-      : legacyOrphan ? 'Enable FCFS here to resume' : live?.detail || 'Reservation available';
     const status = el('td', detail, live?.status === 'warning' ? 'funding-unknown' : live?.status === 'submitted' ? 'funding-ready' : '');
-    const proof = scan.demand.get(contractAddress)?.diagnostic;
-    const pending = demandRun?.pending.has(contractAddress);
     const demandCell = el('td', pending ? 'Loading…' : proof ? null : '—');
-    if (proof && !pending) {
+    if (proof) {
       const diagnostic = el('button', bonusDemandLabel(proof), 'bonus-demand-result');
       diagnostic.type = 'button';
       diagnostic.setAttribute('aria-label', `${diagnostic.textContent} · Last reservation for ${name}`);
@@ -399,6 +415,20 @@ function renderBonusStrategy(force = false) {
     note.textContent = 'No active rentals in this faction meet Min rate/d.';
   }
 }
+
+const bonusHead = $('bonus-head');
+bonusHead.onclick = event => {
+  const button = event.target.closest('[data-bonus-sort]');
+  if (!button) return;
+  const column = button.dataset.bonusSort;
+  const direction = column === bonusSort.column
+    ? (bonusSort.direction === 'ascending' ? 'descending' : 'ascending')
+    : column === 'wallets' ? 'descending' : 'ascending';
+  bonusSort = { column, direction };
+  bonusHead.querySelector('[aria-sort]')?.removeAttribute('aria-sort');
+  button.parentElement.setAttribute('aria-sort', direction);
+  renderBonusStrategy();
+};
 
 async function scanBonusMarket(refresh = false, restart = false) {
   clearTimeout(bonusMarketTimer);

@@ -19,9 +19,18 @@
   <p id="bonus-status" class="earnings-note" role="status"></p>
   <div class="rules-table-scroll">
     <table class="rules-table bonus-table">
-      <thead><tr>
-        <th>Fleet</th><th>Rate/d</th><th>Min days</th><th>Opening bid</th><th>Next bid</th>
-        <th>ATLAS to lock</th><th>Ending In</th><th>Max bid (ATLAS)</th><th>FCFS</th><th>Status</th><th>Demand · last period</th>
+      <thead><tr id="bonus-head">
+        <th scope="col"><button type="button" data-bonus-sort="name">Fleet</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="rate">Rate/d</button></th>
+        <th scope="col" aria-sort="ascending"><button type="button" data-bonus-sort="duration">Min days</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="openingBid">Opening bid</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="nextBid">Next bid</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="requiredAtlas">ATLAS to lock</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="ends">Ending In</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="maximumBidAtlas">Max bid (ATLAS)</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="fcfsEnabled">FCFS</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="detail">Status</button></th>
+        <th scope="col"><button type="button" data-bonus-sort="wallets">Demand · last period</button></th>
       </tr></thead>
       <tbody id="bonus-body"></tbody>
     </table>

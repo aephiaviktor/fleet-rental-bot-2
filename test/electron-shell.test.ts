@@ -259,28 +259,51 @@ test('RPC Usage shows request telemetry instead of limiter settings', async () =
   assert.match(main, /ipcMain\.handle\('rpc-usage:day'/);
 });
 
-test('Bonus Strategy lists active rentals and loads wallet counts as diagnostics', async () => {
-  const [renderer, main] = await Promise.all([readFile('ui/app.js', 'utf8'), readFile('electron/main.cjs', 'utf8')]);
+test('Bonus Strategy lists active rentals and sorts by verified wallet counts as diagnostics arrive', async () => {
+  const [html, renderer, main] = await Promise.all([
+    readFile('ui/index.html', 'utf8'), readFile('ui/app.js', 'utf8'), readFile('electron/main.cjs', 'utf8'),
+  ]);
   class Element {
     children: Element[] = [];
     classList = { toggle() {} };
+    attributes = new Map<string, string>();
     constructor(public textContent = '') {}
     append(...children: Element[]) { this.children.push(...children); }
     replaceChildren() { this.children.length = 0; }
     contains() { return false; }
-    setAttribute() {}
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+    removeAttribute(name: string) { this.attributes.delete(name); }
   }
   const ids = ['bonus-panel', 'bonus-min-rate', 'bonus-body', 'bonus-status', 'bonus-market-status', 'bonus-scan',
     'bonus-demand-status'];
-  const elements = new Map(ids.map(id => [id, new Element()]));
+  const elements = new Map<string, object>(ids.map(id => [id, new Element()]));
+  const headers = new Map(Array.from(html.matchAll(/<th scope="col"( aria-sort="ascending")?><button type="button" data-bonus-sort="(\w+)">([^<]+)<\/button>/g),
+    ([, ascending, column, label]) => {
+      const header = new Element(label);
+      if (ascending) header.setAttribute('aria-sort', 'ascending');
+      return [column, header];
+    }));
+  type HeaderButton = { dataset: { bonusSort: string }; parentElement: Element };
+  const head = {
+    onclick: (_event: { target: { closest: () => HeaderButton } }) => {},
+    querySelector: () => Array.from(headers.values()).find(header => header.attributes.has('aria-sort')),
+  };
+  elements.set('bonus-head', head);
+  const clickSort = (column: string) => head.onclick({
+    target: { closest: () => ({ dataset: { bonusSort: column }, parentElement: headers.get(column)! }) },
+  });
   const demand = new Map([['incomplete', { diagnostic: { status: 'incomplete-history' } }],
-    ['zero', { diagnostic: { status: 'verified', wallets: 0 } }], ['three', { diagnostic: { status: 'verified', wallets: 3 } }]]);
+    ['zero', { diagnostic: { status: 'verified', wallets: 0 } }], ['three', { diagnostic: { status: 'verified', wallets: 3 } }],
+    ['twelve', { diagnostic: { status: 'verified', wallets: 12 } }]]);
   const now = Date.now();
-  const rows = [['unchecked', 3500], ['incomplete', 3500], ['zero', 3500], ['three', 3500], ['below-rate', 2999],
+  const rows = [['unchecked', 3500], ['incomplete', 3500], ['zero', 3500], ['three', 3500], ['twelve', 3500], ['below-rate', 2999],
     ['waiting', 3500, null], ['expired', 3500, now - 1]]
-    .map(([contractAddress, rate, endsAtMs = now + 60_000]) => ({ contractAddress, fleetName: contractAddress, rate, endsAtMs, minimumSeconds: 86400 }));
+    .map(([contractAddress, rate, endsAtMs = now + 60_000]) => ({
+      contractAddress, fleetName: contractAddress, rate, endsAtMs, minimumSeconds: 86400,
+      bidAtlas: contractAddress === 'incomplete' ? null : contractAddress === 'twelve' ? 12 : 3,
+    }));
   const sources = [
-    renderer.slice(renderer.indexOf('function activeBonusListings('), renderer.indexOf('async function scanBonusMarket(')),
+    renderer.slice(renderer.indexOf('let bonusSort = '), renderer.indexOf('async function scanBonusMarket(')),
     renderer.slice(renderer.indexOf('function bonusDemandLabel('), renderer.indexOf('function showBonusDemand(')),
   ];
   const render = runInNewContext(`${sources.join('\n')}\nrenderBonusStrategy;`, {
@@ -293,9 +316,27 @@ test('Bonus Strategy lists active rentals and loads wallet counts as diagnostics
     bonusError: '', bonusSaving: false, bonusDemandError: '',
   });
   render();
-  const rendered = elements.get('bonus-body')!.children.map(row => [row.children[0].textContent,
+  const body = elements.get('bonus-body') as Element;
+  const rendered = body.children.map(row => [row.children[0].textContent,
     (row.children.at(-1)?.children[0] ?? row.children.at(-1))?.textContent]);
-  assert.deepEqual(rendered, [['incomplete', 'History incomplete'], ['three', '3 wallets'], ['unchecked', '—'], ['zero', '0 wallets']]);
+  assert.deepEqual(rendered, [['incomplete', 'History incomplete'], ['three', '3 wallets'], ['twelve', '12 wallets'],
+    ['unchecked', '—'], ['zero', '0 wallets']]);
+  const fleetOrder = () => body.children.map(row => row.children[0].textContent);
+  clickSort('wallets');
+  assert.equal(headers.get('duration')!.attributes.has('aria-sort'), false);
+  assert.equal(headers.get('wallets')!.attributes.get('aria-sort'), 'descending');
+  assert.deepEqual(fleetOrder(), ['twelve', 'three', 'zero', 'incomplete', 'unchecked']);
+  clickSort('wallets');
+  assert.equal(headers.get('wallets')!.attributes.get('aria-sort'), 'ascending');
+  assert.deepEqual(fleetOrder(), ['zero', 'three', 'twelve', 'incomplete', 'unchecked']);
+  demand.set('unchecked', { diagnostic: { status: 'verified', wallets: 5 } });
+  render();
+  assert.deepEqual(fleetOrder(), ['zero', 'three', 'unchecked', 'twelve', 'incomplete']);
+  clickSort('nextBid');
+  assert.equal(headers.get('wallets')!.attributes.has('aria-sort'), false);
+  assert.deepEqual(fleetOrder(), ['three', 'unchecked', 'zero', 'twelve', 'incomplete']);
+  clickSort('nextBid');
+  assert.deepEqual(fleetOrder(), ['twelve', 'three', 'unchecked', 'zero', 'incomplete']);
   const scan = renderer.slice(renderer.indexOf('async function scanBonusMarket('), renderer.indexOf('function bonusDemandLabel('));
   assert.match(scan, /void checkBonusDemand\(\)/);
   assert.doesNotMatch(renderer, /bonus-check-demand/);
